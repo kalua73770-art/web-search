@@ -1,25 +1,25 @@
 {
-  "name": "my-app",
+  "name": "web-search-backend",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "scripts": {
-    "dev": "esbuild api/boot.ts --platform=node --bundle --format=esm --outfile=dist/boot.js --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --watch",
-    "build": "esbuild api/boot.ts --platform=node --bundle --format=esm --outfile=dist/boot.js --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\"",
-    "start": "NODE_ENV=production node dist/boot.js",
+    "build": "npx esbuild api/boot.ts --platform=node --bundle --format=esm --outfile=dist/boot.js --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\"",
+    "start": "node dist/boot.js",
+    "dev": "npx esbuild api/boot.ts --platform=node --bundle --format=esm --outfile=dist/boot.js --watch",
     "check": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.3",
     "cheerio": "^1.2.0",
-    "hono": "^4.8.3"
+    "hono": "^4.8.3",
+    "esbuild": "^0.27.2"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "esbuild": "^0.27.2",
     "typescript": "~5.9.3"
   }
 }
