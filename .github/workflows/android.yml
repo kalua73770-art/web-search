@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
 jobs:
   build:
     name: Build and test Ajmat VoiceFlow
@@ -25,11 +29,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android build tools
         run: |
+          yes | sdkmanager --licenses
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
