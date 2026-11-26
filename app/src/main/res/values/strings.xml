@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Ajmat VoiceFlow</string>
+    <string name="keyboard_name">Ajmat VoiceFlow Keyboard</string>
+    <string name="ime_subtype">Voice typing</string>
+</resources>
