@@ -149,7 +149,7 @@ class VoiceFlowOverlayService : Service() {
             elevation = dp(12).toFloat()
         }
         statusView = TextView(this).apply {
-            text = "Voice"
+            text = "READY"
             textSize = 10f
             setTextColor(0xFFFFFFFF.toInt())
             maxLines = 1
@@ -187,7 +187,6 @@ class VoiceFlowOverlayService : Service() {
         }
         pasteButton = Button(this).apply {
             text = "✓"
-            isEnabled = lastTranscript.isNotBlank()
             contentDescription = "Insert transcript"
             minWidth = dp(38)
             isAllCaps = false
@@ -319,9 +318,11 @@ class VoiceFlowOverlayService : Service() {
         progressBar?.progress = 0
         progressBar?.visibility = ProgressBar.VISIBLE
         startStopButton?.isEnabled = false
-        startStopButton?.text = "Processing…"
+        startStopButton?.text = "…"
+        startStopButton?.contentDescription = "Transcribing"
         cancelButton?.isEnabled = true
-        cancelButton?.text = "Cancel"
+        cancelButton?.text = "×"
+        cancelButton?.contentDescription = "Cancel recognition"
 
         val audioFile = try {
             recorder?.stop() ?: throw IllegalStateException("No active recording.")
@@ -453,7 +454,18 @@ class VoiceFlowOverlayService : Service() {
     }
 
     private fun setStatus(message: String) {
-        statusView?.text = message
+        val compactStatus = when {
+            message.startsWith("Listening", ignoreCase = true) -> "REC"
+            message.contains("Whisper", ignoreCase = true) ||
+                message.contains("transcri", ignoreCase = true) ||
+                message.contains("Audio captured", ignoreCase = true) -> "WORK"
+            message.contains("pasted", ignoreCase = true) -> "DONE"
+            message.startsWith("Done", ignoreCase = true) -> "DONE"
+            message.startsWith("ERROR", ignoreCase = true) -> "ERROR"
+            message.contains("cancel", ignoreCase = true) -> "STOP"
+            else -> "READY"
+        }
+        statusView?.text = compactStatus
     }
 
     private fun stopEverything() {
