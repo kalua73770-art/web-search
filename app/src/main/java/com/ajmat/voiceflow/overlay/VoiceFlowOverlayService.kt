@@ -39,7 +39,22 @@ import java.util.concurrent.Executors
 class VoiceFlowOverlayService : Service() {
     companion object {
         const val ACTION_STOP = "com.ajmat.voiceflow.action.STOP_OVERLAY"
+        @Volatile private var activeInstance: VoiceFlowOverlayService? = null
         private const val CHANNEL_ID = "voiceflow_overlay"
+
+        fun onKeyboardVisibilityChanged(visible: Boolean) {
+            val service = activeInstance ?: return
+            service.mainHandler.post {
+                val enabled = service.getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
+                    .getBoolean("overlay_enabled", false)
+                if (!enabled) return@post
+                if (visible) {
+                    service.showOverlay()
+                } else if (!service.recording && !service.processing) {
+                    service.hideOverlay()
+                }
+            }
+        }
         private const val NOTIFICATION_ID = 7101
     }
 
@@ -83,11 +98,13 @@ class VoiceFlowOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        activeInstance = this
         VoiceFlowLog.info(this, "Floating voice service created.")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            getSharedPreferences("voiceflow", Context.MODE_PRIVATE).edit().putBoolean("overlay_enabled", false).apply()
             stopEverything()
             return START_NOT_STICKY
         }
@@ -116,7 +133,8 @@ class VoiceFlowOverlayService : Service() {
             return START_NOT_STICKY
         }
         showOverlay()
-        return START_NOT_STICKY
+        VoiceFlowAccessibilityService.instance?.refreshKeyboardState()
+        return START_STICKY
     }
 
     private fun showOverlay() {
@@ -159,7 +177,7 @@ class VoiceFlowOverlayService : Service() {
             isAllCaps = false
             isEnabled = true
             setPadding(0, 0, 0, 0)
-            setOnClickListener { if (processing) cancelTranscription() else stopEverything() }
+            setOnClickListener { if (processing) cancelTranscription() else hideOverlay() }
         }
         pasteButton = Button(this).apply {
             text = "✓"
@@ -234,6 +252,19 @@ class VoiceFlowOverlayService : Service() {
             VoiceFlowLog.error(this, "Unable to attach compact floating control.", error)
             finishAndStop()
         }
+    }
+
+    private fun hideOverlay() {
+        try {
+            overlayView?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) { }
+        overlayView = null
+        statusView = null
+        progressBar = null
+        startStopButton = null
+        cancelButton = null
+        pasteButton = null
+        VoiceFlowLog.info(this, "Floating control hidden; background service remains enabled.")
     }
 
     private fun startRecording() {
@@ -434,15 +465,7 @@ class VoiceFlowOverlayService : Service() {
 
     private fun finishAndStop() {
         mainHandler.removeCallbacks(progressTicker)
-        try {
-            if (overlayView != null) windowManager?.removeView(overlayView)
-        } catch (_: Exception) { }
-        overlayView = null
-        statusView = null
-        progressBar = null
-        startStopButton = null
-        cancelButton = null
-        pasteButton = null
+        hideOverlay()
         processing = false
         recording = false
         cancellationRequested = false
@@ -479,7 +502,7 @@ class VoiceFlowOverlayService : Service() {
         return builder
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Ajmat VoiceFlow is ready")
-            .setContentText("Floating voice typing is active. Tap Stop to close.")
+            .setContentText("VoiceFlow stays ready. Mic runs only after you tap it.")
             .setContentIntent(openApp)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(android.R.drawable.ic_media_pause, "Stop", stopService).build())
@@ -497,6 +520,7 @@ class VoiceFlowOverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         mainHandler.removeCallbacks(progressTicker)
         if (recording) recorder?.cancel()
         if (processing) WhisperEngine.cancelTranscription()
