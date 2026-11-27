@@ -45,6 +45,12 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VoiceFlowLog.installCrashHandler(applicationContext)
+        val savedModelId = preferences.getString("model_id", null)
+        val resolvedModelId = com.ajmat.voiceflow.speech.ModelSelectionPolicy.resolveModelId(savedModelId)
+        if (savedModelId != resolvedModelId) {
+            preferences.edit().putString("model_id", resolvedModelId).putString("model_file", ModelCatalog.byId(resolvedModelId).fileName).apply()
+            VoiceFlowLog.info(this, "Legacy model preference migrated to " + resolvedModelId + ".")
+        }
         VoiceFlowLog.info(this, "Ajmat VoiceFlow v2 settings opened.")
         buildScreen()
         requestPermissionsIfNeeded()
@@ -68,11 +74,11 @@ class MainActivity : Activity() {
         content.addView(space(14))
 
         content.addView(label("1. Prepare offline speech recognition", 18f, true))
-        content.addView(label("Choose the multilingual model. Small Q5 is more accurate; Tiny Q5 is lighter and faster to load.", 13f, false))
+        content.addView(label("Base Q5 is the balanced default for Hindi + English. Small Q5 is larger and prioritizes accuracy.", 13f, false))
         modelPicker = Spinner(this)
         val labels = ModelCatalog.models.map { it.title + " (" + it.approximateSize + ")" }
         modelPicker.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
-        val savedId = preferences.getString("model_id", "small-q5")
+        val savedId = preferences.getString("model_id", "base-q5")
         modelPicker.setSelection(ModelCatalog.models.indexOfFirst { it.id == savedId }.coerceAtLeast(0))
         content.addView(modelPicker)
 
