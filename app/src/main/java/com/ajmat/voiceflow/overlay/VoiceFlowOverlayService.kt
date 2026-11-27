@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -38,7 +39,22 @@ import java.util.concurrent.Executors
 class VoiceFlowOverlayService : Service() {
     companion object {
         const val ACTION_STOP = "com.ajmat.voiceflow.action.STOP_OVERLAY"
+        @Volatile private var activeInstance: VoiceFlowOverlayService? = null
         private const val CHANNEL_ID = "voiceflow_overlay"
+
+        fun onKeyboardVisibilityChanged(visible: Boolean) {
+            val service = activeInstance ?: return
+            service.mainHandler.post {
+                val enabled = service.getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
+                    .getBoolean("overlay_enabled", false)
+                if (!enabled) return@post
+                if (visible) {
+                    service.showOverlay()
+                } else if (!service.recording && !service.processing) {
+                    service.hideOverlay()
+                }
+            }
+        }
         private const val NOTIFICATION_ID = 7101
     }
 
@@ -82,11 +98,13 @@ class VoiceFlowOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        activeInstance = this
         VoiceFlowLog.info(this, "Floating voice service created.")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            getSharedPreferences("voiceflow", Context.MODE_PRIVATE).edit().putBoolean("overlay_enabled", false).apply()
             stopEverything()
             return START_NOT_STICKY
         }
@@ -102,6 +120,7 @@ class VoiceFlowOverlayService : Service() {
                 startForeground(NOTIFICATION_ID, buildNotification())
             }
         } catch (error: Exception) {
+            getSharedPreferences("voiceflow", Context.MODE_PRIVATE).edit().putBoolean("overlay_enabled", false).apply()
             VoiceFlowLog.error(this, "Could not start microphone foreground service.", error)
             Toast.makeText(this, "VoiceFlow could not start. Open the app and allow microphone access.", Toast.LENGTH_LONG).show()
             stopSelf()
@@ -115,7 +134,8 @@ class VoiceFlowOverlayService : Service() {
             return START_NOT_STICKY
         }
         showOverlay()
-        return START_NOT_STICKY
+        VoiceFlowAccessibilityService.instance?.refreshKeyboardState()
+        return START_STICKY
     }
 
     private fun showOverlay() {
@@ -123,22 +143,18 @@ class VoiceFlowOverlayService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setBackgroundColor(0xFFF7F9FA.toInt())
-            elevation = dp(10).toFloat()
-        }
-        val heading = TextView(this).apply {
-            text = "Ajmat VoiceFlow"
-            textSize = 15f
-            setTextColor(0xFF162D2B.toInt())
-            setPadding(0, 0, 0, dp(5))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            setBackgroundColor(0xEE172B2A.toInt())
+            elevation = dp(12).toFloat()
         }
         statusView = TextView(this).apply {
-            text = "Ready. Keep your cursor in a text field."
-            textSize = 12f
-            setTextColor(0xFF4D5D5B.toInt())
-            setPadding(0, 0, 0, dp(6))
+            text = "READY"
+            textSize = 10f
+            setTextColor(0xFFFFFFFF.toInt())
+            maxLines = 1
+            setPadding(dp(4), 0, dp(4), 0)
         }
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -146,42 +162,46 @@ class VoiceFlowOverlayService : Service() {
             isIndeterminate = false
             visibility = ProgressBar.GONE
         }
-
-        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         startStopButton = Button(this).apply {
-            text = "🎙 Start"
+            text = "🎙"
+            contentDescription = "Start voice typing"
+            textSize = 17f
+            minWidth = dp(48)
             isAllCaps = false
+            setPadding(0, 0, 0, 0)
             setOnClickListener { if (recording) stopAndTranscribe() else startRecording() }
         }
         cancelButton = Button(this).apply {
-            text = "Cancel"
+            text = "×"
+            contentDescription = "Cancel recognition / close"
+            minWidth = dp(38)
             isAllCaps = false
-            isEnabled = false
-            setOnClickListener { cancelTranscription() }
+            isEnabled = true
+            setPadding(0, 0, 0, 0)
+            setOnClickListener {
+                when {
+                    processing -> cancelTranscription()
+                    recording -> stopAndTranscribe()
+                    else -> hideOverlay()
+                }
+            }
         }
         pasteButton = Button(this).apply {
-            text = "Paste"
+            text = "✓"
+            contentDescription = "Insert transcript"
+            minWidth = dp(38)
             isAllCaps = false
-            isEnabled = false
-            setOnClickListener { pasteTranscript() }
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { if (recording) stopAndTranscribe() else pasteTranscript() }
         }
-        val closeButton = Button(this).apply {
-            text = "×"
-            isAllCaps = false
-            setOnClickListener { stopEverything() }
-        }
-
-        buttons.addView(startStopButton, weighted(1.1f))
-        buttons.addView(cancelButton, weighted(0.85f))
-        buttons.addView(pasteButton, weighted(0.85f))
-        buttons.addView(closeButton, weighted(0.4f))
-        panel.addView(heading)
-        panel.addView(statusView)
-        panel.addView(progressBar)
-        panel.addView(buttons)
+        panel.addView(statusView, LinearLayout.LayoutParams(dp(48), dp(36)))
+        panel.addView(startStopButton, LinearLayout.LayoutParams(dp(48), dp(42)))
+        panel.addView(cancelButton, LinearLayout.LayoutParams(dp(38), dp(42)))
+        panel.addView(pasteButton, LinearLayout.LayoutParams(dp(38), dp(42)))
+        overlayView = panel
 
         val layout = WindowManager.LayoutParams(
-            dp(330),
+            dp(184),
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -196,17 +216,61 @@ class VoiceFlowOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(10)
-            y = dp(150)
+            y = dp(180)
+        }
+
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0
+        var startY = 0
+        var moved = false
+        statusView?.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startX = layout.x
+                    startY = layout.y
+                    moved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downRawX).toInt()
+                    val dy = (event.rawY - downRawY).toInt()
+                    if (kotlin.math.abs(dx) + kotlin.math.abs(dy) > dp(4)) moved = true
+                    if (moved) {
+                        layout.x = (startX - dx).coerceAtLeast(0)
+                        layout.y = (startY + dy).coerceAtLeast(0)
+                        try { windowManager?.updateViewLayout(panel, layout) } catch (_: Exception) { }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> true
+                else -> false
+            }
         }
 
         try {
             windowManager?.addView(panel, layout)
-            overlayView = panel
-            VoiceFlowLog.info(this, "Floating panel attached; it does not take focus from Samsung Keyboard.")
+            VoiceFlowLog.info(this, "Compact draggable voice control attached; Samsung Keyboard focus is preserved.")
         } catch (error: Exception) {
-            VoiceFlowLog.error(this, "Unable to attach floating panel.", error)
+            overlayView = null
+            VoiceFlowLog.error(this, "Unable to attach compact floating control.", error)
             finishAndStop()
         }
+    }
+
+    private fun hideOverlay() {
+        try {
+            overlayView?.let { windowManager?.removeView(it) }
+        } catch (_: Exception) { }
+        overlayView = null
+        statusView = null
+        progressBar = null
+        startStopButton = null
+        cancelButton = null
+        pasteButton = null
+        VoiceFlowLog.info(this, "Floating control hidden; background service remains enabled.")
     }
 
     private fun startRecording() {
@@ -216,9 +280,8 @@ class VoiceFlowOverlayService : Service() {
         }
 
         val preferences = getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
-        val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val modelFile = File(File(filesDir, "models"), filename)
+        val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
+        val modelFile = File(File(filesDir, "models"), model.fileName)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
             setStatus("Offline model missing. Download it from the app first.")
             VoiceFlowLog.warn(this, "Recording blocked because selected model is missing.")
@@ -232,11 +295,12 @@ class VoiceFlowOverlayService : Service() {
             currentProgress = 0
             progressBar?.progress = 0
             progressBar?.visibility = ProgressBar.GONE
-            pasteButton?.isEnabled = false
-            cancelButton?.isEnabled = false
+            pasteButton?.isEnabled = true
+            pasteButton?.contentDescription = "Finish recording and transcribe"
+            cancelButton?.isEnabled = true
             startStopButton?.text = "■ Stop"
             startStopButton?.isEnabled = true
-            setStatus("Listening… speak, then press Stop.")
+            setStatus("Listening")
         } catch (error: Exception) {
             recorder?.cancel()
             recorder = null
@@ -255,9 +319,12 @@ class VoiceFlowOverlayService : Service() {
         progressBar?.progress = 0
         progressBar?.visibility = ProgressBar.VISIBLE
         startStopButton?.isEnabled = false
-        startStopButton?.text = "Processing…"
+        startStopButton?.text = "…"
+        startStopButton?.contentDescription = "Transcribing"
+        pasteButton?.isEnabled = false
         cancelButton?.isEnabled = true
-        cancelButton?.text = "Cancel"
+        cancelButton?.text = "×"
+        cancelButton?.contentDescription = "Cancel recognition"
 
         val audioFile = try {
             recorder?.stop() ?: throw IllegalStateException("No active recording.")
@@ -267,7 +334,8 @@ class VoiceFlowOverlayService : Service() {
             processing = false
             startStopButton?.isEnabled = true
             startStopButton?.text = "🎙 Start"
-            cancelButton?.isEnabled = false
+            cancelButton?.isEnabled = true
+            cancelButton?.text = "×"
             VoiceFlowLog.error(this, "Microphone stop failed.", error)
             setStatus(error.message ?: "Recording failed.")
             return
@@ -310,8 +378,8 @@ class VoiceFlowOverlayService : Service() {
                     lastTranscript = result.text
                     startStopButton?.isEnabled = true
                     startStopButton?.text = "🎙 Start"
-                    cancelButton?.isEnabled = false
-                    cancelButton?.text = "Cancel"
+                    cancelButton?.isEnabled = true
+                    cancelButton?.text = "×"
                     pasteButton?.isEnabled = true
                     progressBar?.progress = 100
                     setClipboard(result.text)
@@ -329,8 +397,8 @@ class VoiceFlowOverlayService : Service() {
                     }
                     startStopButton?.isEnabled = true
                     startStopButton?.text = "🎙 Start"
-                    cancelButton?.isEnabled = false
-                    cancelButton?.text = "Cancel"
+                    cancelButton?.isEnabled = true
+                    cancelButton?.text = "×"
                     pasteButton?.isEnabled = false
                     val message = error.message ?: "Transcription failed."
                     setStatus("ERROR: " + message)
@@ -345,7 +413,7 @@ class VoiceFlowOverlayService : Service() {
         if (!processing) return
         cancellationRequested = true
         cancelButton?.isEnabled = false
-        cancelButton?.text = "Stopping…"
+        cancelButton?.text = "…" 
         setStatus("Cancellation requested. Waiting for the native engine to stop safely…")
         VoiceFlowLog.warn(this, "User requested inference cancellation.")
         WhisperEngine.cancelTranscription()
@@ -388,7 +456,19 @@ class VoiceFlowOverlayService : Service() {
     }
 
     private fun setStatus(message: String) {
-        statusView?.text = message
+        val compactStatus = when {
+            message.startsWith("Listening", ignoreCase = true) -> "REC"
+            message.contains("Whisper", ignoreCase = true) ||
+                message.contains("transcri", ignoreCase = true) ||
+                message.contains("Audio captured", ignoreCase = true) -> "WORK"
+            message.contains("pasted", ignoreCase = true) -> "DONE"
+            message.startsWith("Done", ignoreCase = true) -> "DONE"
+            message.contains("copied", ignoreCase = true) -> "COPY"
+            message.startsWith("ERROR", ignoreCase = true) -> "ERROR"
+            message.contains("cancel", ignoreCase = true) -> "STOP"
+            else -> "READY"
+        }
+        statusView?.text = compactStatus
     }
 
     private fun stopEverything() {
@@ -406,16 +486,9 @@ class VoiceFlowOverlayService : Service() {
     }
 
     private fun finishAndStop() {
+        getSharedPreferences("voiceflow", Context.MODE_PRIVATE).edit().putBoolean("overlay_enabled", false).apply()
         mainHandler.removeCallbacks(progressTicker)
-        try {
-            if (overlayView != null) windowManager?.removeView(overlayView)
-        } catch (_: Exception) { }
-        overlayView = null
-        statusView = null
-        progressBar = null
-        startStopButton = null
-        cancelButton = null
-        pasteButton = null
+        hideOverlay()
         processing = false
         recording = false
         cancellationRequested = false
@@ -452,7 +525,7 @@ class VoiceFlowOverlayService : Service() {
         return builder
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Ajmat VoiceFlow is ready")
-            .setContentText("Floating voice typing is active. Tap Stop to close.")
+            .setContentText("VoiceFlow stays ready. Mic runs only after you tap it.")
             .setContentIntent(openApp)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(android.R.drawable.ic_media_pause, "Stop", stopService).build())
@@ -470,6 +543,7 @@ class VoiceFlowOverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         mainHandler.removeCallbacks(progressTicker)
         if (recording) recorder?.cancel()
         if (processing) WhisperEngine.cancelTranscription()

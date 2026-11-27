@@ -34,9 +34,13 @@ object WhisperEngine {
         cancelRequested.set(false)
 
         val preferences = context.getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
-        val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val modelFile = File(File(context.filesDir, "models"), filename)
+        val savedModelId = preferences.getString("model_id", null)
+        val model = ModelCatalog.byId(savedModelId)
+        if (savedModelId != model.id) {
+            preferences.edit().putString("model_id", model.id).putString("model_file", model.fileName).apply()
+            VoiceFlowLog.info(context, "Model preference normalized to " + model.id + ".")
+        }
+        val modelFile = File(File(context.filesDir, "models"), model.fileName)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
             throw IllegalStateException("Offline model is missing or incomplete. Open Ajmat VoiceFlow and download it again.")
         }
@@ -47,7 +51,7 @@ object WhisperEngine {
             val loadStarted = System.currentTimeMillis()
             contextPointer = WhisperJNI.loadModel(modelFile.absolutePath)
             if (contextPointer == 0L) {
-                throw IllegalStateException("Whisper could not load the model. Check free RAM and try Tiny Q5.")
+                throw IllegalStateException("Whisper could not load the model. Check free RAM and try Base Q5.")
             }
             loadedModelPath = modelFile.absolutePath
             VoiceFlowLog.info(
@@ -73,7 +77,7 @@ object WhisperEngine {
         )
 
         val timeoutFuture: ScheduledFuture<*> = timer.schedule({
-            val reason = "Whisper recognition exceeded 120 seconds and was stopped. Try a shorter recording or Tiny Q5."
+            val reason = "Whisper recognition exceeded 120 seconds and was stopped. Try a shorter recording or Base Q5."
             if (cancelReason.compareAndSet(null, reason)) {
                 cancelRequested.set(true)
                 VoiceFlowLog.error(context, reason)
@@ -104,7 +108,8 @@ object WhisperEngine {
 
         try {
             val available = Runtime.getRuntime().availableProcessors()
-            val threads = available.coerceIn(2, 4)
+            val threads = WhisperThreadPolicy.threadCount(available)
+            VoiceFlowLog.info(context, "Whisper CPU threads selected: " + threads + " of " + available + " available.")
             val result = WhisperJNI.transcribeAudio(
                 contextPointer,
                 wavFile.absolutePath,

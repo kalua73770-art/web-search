@@ -45,6 +45,24 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VoiceFlowLog.installCrashHandler(applicationContext)
+        val baseDefaultApplied = preferences.getBoolean("base_default_applied_130", false)
+        val savedModelId = preferences.getString("model_id", null)
+        val resolvedModelId = com.ajmat.voiceflow.speech.ModelSelectionPolicy
+            .initialModelId(savedModelId, baseDefaultApplied)
+        if (!baseDefaultApplied || savedModelId != resolvedModelId) {
+            preferences.edit()
+                .putString("model_id", resolvedModelId)
+                .putString("model_file", ModelCatalog.byId(resolvedModelId).fileName)
+                .putBoolean("base_default_applied_130", true)
+                .apply()
+            if (!baseDefaultApplied) {
+                File(File(filesDir, "models"), "ggml-tiny-q5_1.bin").delete()
+                File(File(filesDir, "models"), "ggml-tiny-q5_1.bin.part").delete()
+                VoiceFlowLog.info(this, "Version 1.3.0 default model set to Base Q5; obsolete Tiny Q5 cache removed.")
+            } else {
+                VoiceFlowLog.info(this, "Legacy model preference migrated to " + resolvedModelId + ".")
+            }
+        }
         VoiceFlowLog.info(this, "Ajmat VoiceFlow v2 settings opened.")
         buildScreen()
         requestPermissionsIfNeeded()
@@ -68,11 +86,11 @@ class MainActivity : Activity() {
         content.addView(space(14))
 
         content.addView(label("1. Prepare offline speech recognition", 18f, true))
-        content.addView(label("Choose the multilingual model. Small Q5 is more accurate; Tiny Q5 is lighter and faster to load.", 13f, false))
+        content.addView(label("Base Q5 is the balanced default for Hindi + English. Small Q5 is larger and prioritizes accuracy.", 13f, false))
         modelPicker = Spinner(this)
         val labels = ModelCatalog.models.map { it.title + " (" + it.approximateSize + ")" }
         modelPicker.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
-        val savedId = preferences.getString("model_id", "small-q5")
+        val savedId = preferences.getString("model_id", "base-q5")
         modelPicker.setSelection(ModelCatalog.models.indexOfFirst { it.id == savedId }.coerceAtLeast(0))
         content.addView(modelPicker)
 
@@ -115,16 +133,26 @@ class MainActivity : Activity() {
         content.addView(space(18))
         content.addView(label("2. Start floating voice typing", 18f, true))
         content.addView(label(
-            "Keep Samsung Keyboard selected. Open any app and place the cursor in a text box. Then start this floating mic panel, speak, and press Stop. VoiceFlow copies the transcript and can paste it into the focused field.",
+            "Keep Samsung Keyboard selected. Enable Paste Helper in Android Accessibility settings once, then start VoiceFlow once. The compact mic appears when the keyboard is open in an editable field. Tap the mic to speak; tap it again to finish. VoiceFlow transcribes and inserts the text. The foreground notification keeps the service active; microphone capture starts only after you tap the mic.",
             13f,
             false
         ))
         permissionStatus = label("", 13f, false)
         content.addView(permissionStatus)
 
-        overlayButton = button("Start floating voice panel")
+        overlayButton = button("Enable / show floating mic")
         overlayButton.setOnClickListener { startOverlay() }
         content.addView(overlayButton)
+        content.addView(button("Disable floating voice service").apply {
+            setOnClickListener {
+                try {
+                    startService(Intent(this@MainActivity, VoiceFlowOverlayService::class.java).setAction(VoiceFlowOverlayService.ACTION_STOP))
+                    Toast.makeText(this@MainActivity, "VoiceFlow background service disabled.", Toast.LENGTH_SHORT).show()
+                } catch (error: Exception) {
+                    VoiceFlowLog.error(this@MainActivity, "Could not disable floating voice service.", error)
+                }
+            }
+        })
 
         content.addView(button("Allow Display over other apps").apply {
             setOnClickListener { openOverlayPermissionSettings() }
@@ -142,9 +170,9 @@ class MainActivity : Activity() {
         })
 
         content.addView(space(18))
-        content.addView(label("4. Optional one-tap paste helper", 18f, true))
+        content.addView(label("4. Keyboard detection and automatic insertion", 18f, true))
         content.addView(label(
-            "Paste Helper is optional. If Android shows “App was denied access” for this sideloaded app, open App info, tap the three-dot menu, choose Allow restricted settings, then return here and enable the helper. Play Protect is separate and does not grant Accessibility access. Without Paste Helper, VoiceFlow still copies text and you can paste using Samsung Keyboard's clipboard.",
+            "Enable Ajmat VoiceFlow under Android Accessibility settings. This opt-in helper detects only whether a keyboard and an editable field are present, and pastes the final transcript into the focused field. It does not read or store what you type. If Android blocks the service for a sideloaded app, open App info > three-dot menu > Allow restricted settings, then enable VoiceFlow in Accessibility. Without this helper, manual floating mode and clipboard paste remain available.",
             13f,
             false
         ))
@@ -256,9 +284,8 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Allow microphone permission, then tap Start again.", Toast.LENGTH_LONG).show()
             return
         }
-        val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val modelFile = File(File(filesDir, "models"), filename)
+        val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
+        val modelFile = File(File(filesDir, "models"), model.fileName)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
             Toast.makeText(this, "Download the offline model first.", Toast.LENGTH_LONG).show()
             VoiceFlowLog.warn(this, "Overlay launch blocked: selected model is not installed.")
@@ -270,6 +297,7 @@ class MainActivity : Activity() {
             return
         }
 
+        preferences.edit().putBoolean("overlay_enabled", true).apply()
         val intent = Intent(this, VoiceFlowOverlayService::class.java)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
@@ -369,8 +397,7 @@ class MainActivity : Activity() {
     private fun refreshStatus() {
         if (!::modelStatus.isInitialized) return
         val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val file = File(File(filesDir, "models"), filename)
+        val file = File(File(filesDir, "models"), model.fileName)
         modelStatus.text = if (file.exists() && file.length() >= model.minimumBytes) {
             "Offline model ready: " + model.title
         } else {
@@ -386,7 +413,7 @@ class MainActivity : Activity() {
         val pasteHelper = isPasteHelperEnabled()
         permissionStatus.text = "Microphone: " + (if (microphone) "allowed" else "not allowed") +
             "  •  Display over apps: " + (if (overlay) "allowed" else "not allowed") +
-            "  •  Paste Helper: " + (if (pasteHelper) "enabled" else "optional / off")
+            "  •  Keyboard helper: " + (if (pasteHelper) "enabled" else "not enabled")
     }
 
     private fun isPasteHelperEnabled(): Boolean {

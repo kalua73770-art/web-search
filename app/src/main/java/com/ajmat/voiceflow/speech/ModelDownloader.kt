@@ -14,6 +14,30 @@ object ModelDownloader {
         model: ModelSpec,
         onProgress: (downloaded: Long, total: Long) -> Unit
     ): File {
+        var lastFailure: IOException? = null
+        for (attempt in 1..3) {
+            try {
+                return downloadOnce(context, model, onProgress)
+            } catch (error: IOException) {
+                lastFailure = error
+                if (attempt == 3 || error.message?.contains("checksum", ignoreCase = true) == true) throw error
+                try {
+                    Thread.sleep(attempt * 800L)
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IOException("Model download retry was interrupted.", interrupted)
+                }
+            }
+        }
+        throw lastFailure ?: IOException("Model download failed.")
+
+    }
+
+    private fun downloadOnce(
+        context: Context,
+        model: ModelSpec,
+        onProgress: (downloaded: Long, total: Long) -> Unit
+    ): File {
         val directory = File(context.filesDir, "models").apply { mkdirs() }
         val destination = File(directory, model.fileName)
         if (destination.exists() && destination.length() >= model.minimumBytes) {
@@ -27,8 +51,8 @@ object ModelDownloader {
 
         try {
             connection = (URL(model.downloadUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 20_000
-                readTimeout = 60_000
+                connectTimeout = 30_000
+                readTimeout = 120_000
                 instanceFollowRedirects = true
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "AjmatVoiceFlow/1.0")

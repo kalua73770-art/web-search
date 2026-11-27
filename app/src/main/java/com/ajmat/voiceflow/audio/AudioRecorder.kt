@@ -35,39 +35,58 @@ class AudioRecorder(
     @Volatile private var captureError: Throwable? = null
     private var recordingStartedAt = 0L
 
+    private fun createAudioRecord(bufferSize: Int): Pair<AudioRecord, Int> {
+        var lastFailure: Throwable? = null
+        val sources = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC
+        )
+        for (source in sources) {
+            var candidate: AudioRecord? = null
+            try {
+                candidate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && attributionContext != null) {
+                    AudioRecord.Builder()
+                        .setContext(attributionContext)
+                        .setAudioSource(source)
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setSampleRate(SAMPLE_RATE)
+                                .setChannelMask(CHANNEL_CONFIG)
+                                .setEncoding(AUDIO_FORMAT)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(bufferSize)
+                        .build()
+                } else {
+                    AudioRecord(source, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufferSize)
+                }
+                if (candidate.state == AudioRecord.STATE_INITIALIZED) {
+                    return candidate to source
+                }
+                candidate.release()
+                candidate = null
+                lastFailure = IllegalStateException("AudioRecord source " + source + " did not initialize.")
+            } catch (error: Exception) {
+                lastFailure = error
+                try { candidate?.release() } catch (_: Exception) { }
+            }
+        }
+        throw IllegalStateException("Android could not initialize voice-recognition or microphone capture.", lastFailure)
+    }
+
     fun start() {
         check(!recording) { "Already recording." }
         val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         check(minimum > 0) { "This device does not support 16 kHz mono microphone capture (code " + minimum + ")." }
 
         val bufferSize = maxOf(minimum * 2, SAMPLE_RATE)
-        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && attributionContext != null) {
-            AudioRecord.Builder()
-                .setContext(attributionContext)
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(CHANNEL_CONFIG)
-                        .setEncoding(AUDIO_FORMAT)
-                        .build()
-                )
-                .setBufferSizeInBytes(bufferSize)
-                .build()
-        } else {
-            AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
-        }
-
-        check(recorder.state == AudioRecord.STATE_INITIALIZED) {
-            recorder.release()
-            "Microphone could not be initialized by Android."
-        }
+        val (recorder, audioSource) = createAudioRecord(bufferSize)
+        VoiceFlowLog.info(
+            context,
+            "Using microphone source=" +
+                (if (audioSource == MediaRecorder.AudioSource.VOICE_RECOGNITION) "VOICE_RECOGNITION" else "MIC") +
+                ", sampleRate=" + SAMPLE_RATE + ", bufferBytes=" + bufferSize + "."
+        )
 
         val directory = File(context.cacheDir, "voiceflow-audio").apply { mkdirs() }
         val file = File.createTempFile("voice-", ".wav", directory)
