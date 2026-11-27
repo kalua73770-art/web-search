@@ -15,7 +15,8 @@ object TranscriptionPipeline {
         context: Context,
         audioFile: File,
         language: String,
-        onStatus: (String) -> Unit = {}
+        onStatus: (String) -> Unit = {},
+        onProgress: (Int) -> Unit = {}
     ): TranscriptionResult {
         val startedAt = System.currentTimeMillis()
         val preferences = context.getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
@@ -45,9 +46,9 @@ object TranscriptionPipeline {
             }
 
             onStatus("Loading offline model…")
-            VoiceFlowLog.info(context, "Offline Whisper fallback started.")
-            onStatus("Recognizing speech on this phone…")
-            val text = WhisperEngine.transcribe(context, audioFile, language)
+            VoiceFlowLog.info(context, "Offline Whisper recognition started.")
+            onStatus("Starting on-device speech engine…")
+            val text = WhisperEngine.transcribe(context, audioFile, language, onProgress)
             if (text.isBlank()) {
                 throw IllegalStateException("No speech was recognized. Check microphone level and try again.")
             }

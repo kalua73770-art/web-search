@@ -13,4 +13,12 @@ internal object WhisperJNI {
         numThreads: Int,
         language: String
     ): String
+
+    /** Cooperative native abort, checked between Whisper compute graphs. */
+    external fun cancelTranscription()
+
+    /** Returns -1 if idle; otherwise the last native progress callback, 0..100. */
+    external fun getProgress(): Int
+
+    external fun getSystemInfo(): String
 }

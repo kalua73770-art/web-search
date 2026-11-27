@@ -144,11 +144,17 @@ class MainActivity : Activity() {
         content.addView(space(18))
         content.addView(label("4. Optional one-tap paste helper", 18f, true))
         content.addView(label(
-            "Enable VoiceFlow Paste Helper in Accessibility settings to let the floating panel paste into the currently focused text field. It does not read or save screen contents. Without it, the transcript stays on your clipboard and you can use Samsung Keyboard's Paste command.",
+            "Paste Helper is optional. If Android shows “App was denied access” for this sideloaded app, open App info, tap the three-dot menu, choose Allow restricted settings, then return here and enable the helper. Play Protect is separate and does not grant Accessibility access. Without Paste Helper, VoiceFlow still copies text and you can paste using Samsung Keyboard's clipboard.",
             13f,
             false
         ))
-        content.addView(button("Enable VoiceFlow Paste Helper").apply {
+        content.addView(button("Open App info — Allow restricted settings").apply {
+            setOnClickListener {
+                VoiceFlowLog.info(this@MainActivity, "Opening app info for Android restricted-settings permission.")
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + packageName)))
+            }
+        })
+        content.addView(button("Open Accessibility settings").apply {
             setOnClickListener {
                 VoiceFlowLog.info(this@MainActivity, "Opening Accessibility settings at user request.")
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -377,8 +383,19 @@ class MainActivity : Activity() {
         if (!::permissionStatus.isInitialized) return
         val microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val overlay = Settings.canDrawOverlays(this)
+        val pasteHelper = isPasteHelperEnabled()
         permissionStatus.text = "Microphone: " + (if (microphone) "allowed" else "not allowed") +
-            "  •  Display over apps: " + (if (overlay) "allowed" else "not allowed")
+            "  •  Display over apps: " + (if (overlay) "allowed" else "not allowed") +
+            "  •  Paste Helper: " + (if (pasteHelper) "enabled" else "optional / off")
+    }
+
+    private fun isPasteHelperEnabled(): Boolean {
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ).orEmpty()
+        val expected = packageName + "/com.ajmat.voiceflow.accessibility.VoiceFlowAccessibilityService"
+        return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
     }
 
     private fun requestPermissionsIfNeeded() {

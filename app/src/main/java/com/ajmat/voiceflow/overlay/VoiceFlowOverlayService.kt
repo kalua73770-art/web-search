@@ -22,6 +22,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import com.ajmat.voiceflow.MainActivity
@@ -30,6 +31,7 @@ import com.ajmat.voiceflow.audio.AudioRecorder
 import com.ajmat.voiceflow.logging.VoiceFlowLog
 import com.ajmat.voiceflow.speech.ModelCatalog
 import com.ajmat.voiceflow.speech.TranscriptionPipeline
+import com.ajmat.voiceflow.speech.WhisperEngine
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -45,11 +47,16 @@ class VoiceFlowOverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: LinearLayout? = null
     private var statusView: TextView? = null
+    private var progressBar: ProgressBar? = null
     private var startStopButton: Button? = null
+    private var cancelButton: Button? = null
     private var pasteButton: Button? = null
     private var recorder: AudioRecorder? = null
     @Volatile private var recording = false
     @Volatile private var processing = false
+    @Volatile private var closeWhenFinished = false
+    @Volatile private var cancellationRequested = false
+    @Volatile private var currentProgress = 0
     private var lastTranscript = ""
     private var processingStartedAt = 0L
 
@@ -57,11 +64,17 @@ class VoiceFlowOverlayService : Service() {
         override fun run() {
             if (processing) {
                 val elapsedSeconds = (System.currentTimeMillis() - processingStartedAt) / 1000L
-                setStatus(
-                    "Recognizing on this phone… " + elapsedSeconds +
-                        "s elapsed. Open VoiceFlow Logs for details."
-                )
-                mainHandler.postDelayed(this, 8_000L)
+                if (cancellationRequested) {
+                    setStatus("Stopping safely… " + elapsedSeconds + "s elapsed.")
+                } else {
+                    val progressText = if (currentProgress > 0) {
+                        "Whisper: " + currentProgress + "% · "
+                    } else {
+                        "Whisper is warming up · "
+                    }
+                    setStatus(progressText + elapsedSeconds + "s elapsed. Cancel is available.")
+                }
+                mainHandler.postDelayed(this, 2_000L)
             }
         }
     }
@@ -98,7 +111,7 @@ class VoiceFlowOverlayService : Service() {
         if (!Settings.canDrawOverlays(this)) {
             VoiceFlowLog.warn(this, "Overlay permission missing; stopping floating panel.")
             Toast.makeText(this, "Allow Display over other apps for Ajmat VoiceFlow.", Toast.LENGTH_LONG).show()
-            stopEverything()
+            finishAndStop()
             return START_NOT_STICKY
         }
         showOverlay()
@@ -127,11 +140,24 @@ class VoiceFlowOverlayService : Service() {
             setTextColor(0xFF4D5D5B.toInt())
             setPadding(0, 0, 0, dp(6))
         }
+        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            isIndeterminate = false
+            visibility = ProgressBar.GONE
+        }
+
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         startStopButton = Button(this).apply {
             text = "🎙 Start"
             isAllCaps = false
             setOnClickListener { if (recording) stopAndTranscribe() else startRecording() }
+        }
+        cancelButton = Button(this).apply {
+            text = "Cancel"
+            isAllCaps = false
+            isEnabled = false
+            setOnClickListener { cancelTranscription() }
         }
         pasteButton = Button(this).apply {
             text = "Paste"
@@ -144,15 +170,18 @@ class VoiceFlowOverlayService : Service() {
             isAllCaps = false
             setOnClickListener { stopEverything() }
         }
-        buttons.addView(startStopButton, weighted(1.2f))
-        buttons.addView(pasteButton, weighted(1f))
-        buttons.addView(closeButton, weighted(0.45f))
+
+        buttons.addView(startStopButton, weighted(1.1f))
+        buttons.addView(cancelButton, weighted(0.85f))
+        buttons.addView(pasteButton, weighted(0.85f))
+        buttons.addView(closeButton, weighted(0.4f))
         panel.addView(heading)
         panel.addView(statusView)
+        panel.addView(progressBar)
         panel.addView(buttons)
 
         val layout = WindowManager.LayoutParams(
-            dp(300),
+            dp(330),
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -176,13 +205,13 @@ class VoiceFlowOverlayService : Service() {
             VoiceFlowLog.info(this, "Floating panel attached; it does not take focus from Samsung Keyboard.")
         } catch (error: Exception) {
             VoiceFlowLog.error(this, "Unable to attach floating panel.", error)
-            stopEverything()
+            finishAndStop()
         }
     }
 
     private fun startRecording() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            setStatus("Microphone permission is missing. Open VoiceFlow and allow it.")
+            setStatus("Microphone permission missing. Open VoiceFlow and allow Microphone.")
             return
         }
 
@@ -191,7 +220,7 @@ class VoiceFlowOverlayService : Service() {
         val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
         val modelFile = File(File(filesDir, "models"), filename)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
-            setStatus("Offline model is missing. Download it from the VoiceFlow app first.")
+            setStatus("Offline model missing. Download it from the app first.")
             VoiceFlowLog.warn(this, "Recording blocked because selected model is missing.")
             return
         }
@@ -200,8 +229,13 @@ class VoiceFlowOverlayService : Service() {
             recorder = AudioRecorder(this).also { it.start() }
             recording = true
             lastTranscript = ""
+            currentProgress = 0
+            progressBar?.progress = 0
+            progressBar?.visibility = ProgressBar.GONE
             pasteButton?.isEnabled = false
+            cancelButton?.isEnabled = false
             startStopButton?.text = "■ Stop"
+            startStopButton?.isEnabled = true
             setStatus("Listening… speak, then press Stop.")
         } catch (error: Exception) {
             recorder?.cancel()
@@ -215,8 +249,15 @@ class VoiceFlowOverlayService : Service() {
         if (!recording || processing) return
         recording = false
         processing = true
+        closeWhenFinished = false
+        cancellationRequested = false
+        currentProgress = 0
+        progressBar?.progress = 0
+        progressBar?.visibility = ProgressBar.VISIBLE
         startStopButton?.isEnabled = false
         startStopButton?.text = "Processing…"
+        cancelButton?.isEnabled = true
+        cancelButton?.text = "Cancel"
 
         val audioFile = try {
             recorder?.stop() ?: throw IllegalStateException("No active recording.")
@@ -226,47 +267,88 @@ class VoiceFlowOverlayService : Service() {
             processing = false
             startStopButton?.isEnabled = true
             startStopButton?.text = "🎙 Start"
+            cancelButton?.isEnabled = false
             VoiceFlowLog.error(this, "Microphone stop failed.", error)
             setStatus(error.message ?: "Recording failed.")
             return
         }
+
         recorder = null
         val language = getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
             .getString("language", "auto") ?: "auto"
         processingStartedAt = System.currentTimeMillis()
-        setStatus("Audio captured. Loading model and recognizing speech…")
+        setStatus("Audio captured. Starting optimized Whisper…")
         mainHandler.removeCallbacks(progressTicker)
-        mainHandler.postDelayed(progressTicker, 8_000L)
-        VoiceFlowLog.info(this, "Overlay stopped recording; starting transcription.")
+        mainHandler.postDelayed(progressTicker, 2_000L)
+        VoiceFlowLog.info(this, "Overlay stopped recording; starting optimized transcription.")
 
         worker.execute {
             try {
-                val result = TranscriptionPipeline.transcribe(this, audioFile, language) { message ->
-                    mainHandler.post { setStatus(message) }
-                }
+                val result = TranscriptionPipeline.transcribe(
+                    this,
+                    audioFile,
+                    language,
+                    onStatus = { message -> mainHandler.post { if (processing) setStatus(message) } },
+                    onProgress = { value ->
+                        mainHandler.post {
+                            currentProgress = value
+                            progressBar?.progress = value
+                            if (processing && !cancellationRequested) {
+                                setStatus("Whisper is processing audio: " + value + "%")
+                            }
+                        }
+                    }
+                )
                 mainHandler.post {
                     processing = false
+                    cancellationRequested = false
                     mainHandler.removeCallbacks(progressTicker)
+                    if (closeWhenFinished) {
+                        finishAndStop()
+                        return@post
+                    }
                     lastTranscript = result.text
                     startStopButton?.isEnabled = true
                     startStopButton?.text = "🎙 Start"
+                    cancelButton?.isEnabled = false
+                    cancelButton?.text = "Cancel"
                     pasteButton?.isEnabled = true
+                    progressBar?.progress = 100
                     setClipboard(result.text)
-                    setStatus("Done in " + (result.elapsedMs / 1000.0) + "s. Tap Paste.")
+                    setStatus("Done in " + (result.elapsedMs / 1000.0) + "s. Text copied. Tap Paste.")
                     tryAutoPaste()
                 }
             } catch (error: Exception) {
                 mainHandler.post {
                     processing = false
+                    cancellationRequested = false
                     mainHandler.removeCallbacks(progressTicker)
+                    if (closeWhenFinished) {
+                        finishAndStop()
+                        return@post
+                    }
                     startStopButton?.isEnabled = true
                     startStopButton?.text = "🎙 Start"
+                    cancelButton?.isEnabled = false
+                    cancelButton?.text = "Cancel"
                     pasteButton?.isEnabled = false
-                    setStatus("ERROR: " + (error.message ?: "Transcription failed.") + " Open Logs in the app.")
-                    Toast.makeText(this, "VoiceFlow failed. Open Logs in the app for details.", Toast.LENGTH_LONG).show()
+                    val message = error.message ?: "Transcription failed."
+                    setStatus("ERROR: " + message)
+                    VoiceFlowLog.error(this, "Overlay transcription UI received failure.", error)
+                    Toast.makeText(this, "VoiceFlow: " + message, Toast.LENGTH_LONG).show()
                 }
             }
         }
+    }
+
+    private fun cancelTranscription() {
+        if (!processing) return
+        cancellationRequested = true
+        cancelButton?.isEnabled = false
+        cancelButton?.text = "Stopping…"
+        setStatus("Cancellation requested. Waiting for the native engine to stop safely…")
+        VoiceFlowLog.warn(this, "User requested inference cancellation.")
+        WhisperEngine.cancelTranscription()
     }
 
     private fun tryAutoPaste() {
@@ -276,7 +358,7 @@ class VoiceFlowOverlayService : Service() {
             pasteButton?.isEnabled = false
             setStatus("Text pasted into the focused field.")
         } else {
-            setStatus("Copied. Could not auto-paste here; tap Paste or use the field's Paste menu.")
+            setStatus("Text copied. Tap Paste or use Samsung Keyboard's clipboard.")
         }
     }
 
@@ -288,21 +370,21 @@ class VoiceFlowOverlayService : Service() {
         setClipboard(lastTranscript)
         val service = VoiceFlowAccessibilityService.instance
         if (service == null) {
-            setStatus("Copied to clipboard. Enable Paste Helper in VoiceFlow or paste manually.")
+            setStatus("Copied to clipboard. Use Samsung Keyboard's clipboard/paste key.")
             return
         }
         if (service.pasteIntoFocusedField()) {
             pasteButton?.isEnabled = false
             setStatus("Text pasted.")
         } else {
-            setStatus("Clipboard ready, but the focused text field refused paste.")
+            setStatus("Clipboard ready, but this field refused automatic paste.")
         }
     }
 
     private fun setClipboard(text: String) {
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Ajmat VoiceFlow", text))
-        VoiceFlowLog.info(this, "Transcript copied to clipboard; text content is not written to logs.")
+        VoiceFlowLog.info(this, "Transcript copied to clipboard; dictated content withheld from logs.")
     }
 
     private fun setStatus(message: String) {
@@ -310,18 +392,34 @@ class VoiceFlowOverlayService : Service() {
     }
 
     private fun stopEverything() {
+        if (processing) {
+            closeWhenFinished = true
+            setStatus("Stopping recognition before closing…")
+            cancelTranscription()
+            return
+        }
+        if (recording) {
+            recorder?.cancel()
+            recording = false
+        }
+        finishAndStop()
+    }
+
+    private fun finishAndStop() {
         mainHandler.removeCallbacks(progressTicker)
-        if (recording) recorder?.cancel()
-        recording = false
-        processing = false
-        recorder = null
         try {
             if (overlayView != null) windowManager?.removeView(overlayView)
         } catch (_: Exception) { }
         overlayView = null
         statusView = null
+        progressBar = null
         startStopButton = null
+        cancelButton = null
         pasteButton = null
+        processing = false
+        recording = false
+        cancellationRequested = false
+        recorder = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         VoiceFlowLog.info(this, "Floating voice panel closed.")
@@ -374,6 +472,7 @@ class VoiceFlowOverlayService : Service() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(progressTicker)
         if (recording) recorder?.cancel()
+        if (processing) WhisperEngine.cancelTranscription()
         worker.shutdownNow()
         try { if (overlayView != null) windowManager?.removeView(overlayView) } catch (_: Exception) { }
         overlayView = null
