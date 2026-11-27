@@ -6,8 +6,8 @@ enum class RecognitionRoute {
 }
 
 /**
- * Online recognition is attempted only when the user has configured an
- * HTTPS endpoint. An absent endpoint always means fully local recognition.
+ * Maps Android locale tags to Whisper's language identifiers.
+ * Unknown/mixed locales deliberately use Whisper's automatic detector.
  */
 object RecognitionPolicy {
     fun routeFor(endpoint: String?): RecognitionRoute =
@@ -18,8 +18,21 @@ object RecognitionPolicy {
         }
 
     fun normalizeLanguage(language: String?): String = when (language?.trim()?.lowercase()) {
-        "hi", "hindi" -> "hi"
-        "en", "english" -> "en"
+        "hi", "hindi", "hi-in" -> "hi"
+        "en", "english", "en-in", "en-us", "en-gb" -> "en"
         else -> "auto"
+    }
+
+    fun languageFromLocale(locale: String?): String {
+        val languageTag = locale
+            ?.trim()
+            ?.replace('_', '-')
+            ?.substringBefore('-')
+            ?.lowercase()
+        return when (languageTag) {
+            "hi" -> "hi"
+            "en" -> "en"
+            else -> "auto"
+        }
     }
 }

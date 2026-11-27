@@ -1,84 +1,88 @@
 # Ajmat VoiceFlow
 
-Ajmat VoiceFlow is a native Android voice-typing keyboard. It can type dictated speech directly into the focused text field of messaging apps, browsers, documents, and other Android apps.
+Ajmat VoiceFlow is a native Android voice-typing companion designed to **keep the user's existing keyboard**. It does not replace Samsung Keyboard or install a second typing keyboard.
 
-## Features
+The app offers two independent ways to dictate:
 
-- Android Input Method Editor (IME), not a web page or floating overlay.
-- Hindi, English, and Hinglish-friendly multilingual recognition.
-- Whisper multilingual offline recognition through whisper.cpp.
-- Two downloadable quantized models:
-  - **Small Q5** — approximately 190 MB; preferred for accuracy.
-  - **Tiny Q5** — approximately 32 MB; smaller and lighter.
-- Language controls: Auto, Hindi, and English.
-- Long recordings are streamed to a temporary WAV file instead of being held entirely in RAM.
-- Optional online-first recognition through a user-configured HTTPS endpoint. Network failure or timeout falls back to the local model.
-- Temporary recording files are deleted after transcription.
-- No TTS, chat history, account, or audio archive.
+1. **System voice-input provider** — registers an Android `RecognitionService`. In Android Voice Input settings, choose Ajmat VoiceFlow if the device exposes third-party providers. Samsung Keyboard firmware varies; some Samsung releases only expose Samsung Voice Input and Google Voice Typing.
+2. **Floating voice panel** — works independently of the selected keyboard. Keep Samsung Keyboard selected, focus a text field, tap the floating mic, speak, then tap Stop. The transcript is copied to the clipboard; the optional Paste Helper can send Android's paste action to the currently focused text control. Without the helper, paste using Samsung Keyboard's clipboard/paste command.
+
+## Recognition and models
+
+- Multilingual Whisper using whisper.cpp, compiled for `arm64-v8a` and `x86_64`.
+- Auto language detection plus Hindi and English selection.
+- **Small Q5** (about 190 MB on disk) for stronger accuracy.
+- **Tiny Q5** (about 32 MB) for lower memory use and faster loading.
+- The models are downloaded into app-private storage and checked against the published SHA-1 hash.
+- Long recordings are streamed into a temporary mono 16 kHz WAV file rather than buffered completely in memory.
+- Optional online-first route uses a user-supplied HTTPS endpoint; failures/timeouts fall back to local Whisper.
+
+The quantized model inventory and hashes are published by the official whisper.cpp model repository: https://huggingface.co/ggerganov/whisper.cpp
 
 ## First-time setup
 
-1. Install the APK produced by the Android CI workflow.
-2. Open **Ajmat VoiceFlow** and allow microphone permission.
-3. Select **Small Q5** (recommended) or **Tiny Q5**, then download it. The model is downloaded once and stored in the app's private storage.
-4. Open **Input method settings** and enable **Ajmat VoiceFlow Keyboard**.
-5. In any app, open the keyboard and select Ajmat VoiceFlow.
-6. Tap the microphone button to start recording; tap **Stop and type** to insert the transcript at the cursor.
+1. Install the APK and open Ajmat VoiceFlow.
+2. Allow microphone permission.
+3. Download Small Q5, or choose Tiny Q5 if you prefer a smaller memory footprint.
+4. Keep Samsung Keyboard selected as your normal keyboard.
+5. Allow **Display over other apps** and tap **Start floating voice panel**.
+6. Open WhatsApp, browser, document, or another app and focus the text field before starting dictation.
+7. Tap Start, speak, then Stop. VoiceFlow shows processing status, copies the transcript, and tries the optional paste action.
+8. To enable automatic paste into the focused text field, enable **VoiceFlow Paste Helper** in Android Accessibility settings.
 
-Small Q5 needs considerably more working memory than its 190 MB download size. On a device with memory pressure, switch to Tiny Q5 from the app screen and download it instead.
+### Try the Android/Samsung voice provider
 
-## Online fallback contract
+Open **System Voice Input settings** from VoiceFlow. If Android/Samsung lists Ajmat VoiceFlow as a provider, select it. The app registers the standard Android `android.speech.RecognitionService` interface. Whether Samsung Keyboard offers the third-party provider in its voice button is controlled by the keyboard/OEM build and cannot be guaranteed by an app. The floating panel is the independent fallback.
 
-Online mode is optional and is disabled when the endpoint field is empty. When configured, the app sends the WAV recording to the exact HTTPS URL you enter.
+### Accessibility Paste Helper privacy
 
-Request: `POST multipart/form-data`
+The helper is optional. It does not subscribe to or store screen text. It only attempts `AccessibilityNodeInfo.ACTION_PASTE` on the currently focused input control after the user taps VoiceFlow's Paste action. If it is not enabled or an app blocks paste, the text remains in the clipboard for manual paste.
 
-| Field | Type | Value |
-|---|---|---|
-| `audio` | file | mono 16 kHz PCM WAV |
-| `language` | text | `auto`, `hi`, or `en` |
+## Diagnostics
 
-Expected success response:
+Use **View logs and diagnostics** in the app. Logs include:
+- microphone start/stop, captured byte count, and recording duration;
+- model download and checksum status;
+- model load and inference duration;
+- online fallback outcomes;
+- app-level errors and Java exception stack traces.
+
+The log deliberately does **not** include dictated text or audio content. Logs are kept in app-private storage and can be copied from the diagnostics screen.
+
+## Online endpoint contract
+
+Leave the URL field blank for fully offline operation. If configured, VoiceFlow sends:
+- `audio`: temporary mono 16 kHz PCM WAV file
+- `language`: `auto`, `hi`, or `en`
+
+Expected JSON response:
 
     {"text":"recognized words here"}
 
-The online service should return a 2xx response and must not persist recordings if you want the same no-retention behavior as the offline path. If the service is unavailable, times out, returns an error, or provides an empty transcript, the app automatically tries the local Whisper model.
-
-**This repository does not host a speech-inference server.** You must provide your own compatible HTTPS endpoint to use the online path. The offline keyboard works without that endpoint and without internet after the model has been downloaded.
+The endpoint must use HTTPS. This repository does not host a speech-inference server. To retain privacy, configure a service that does not store incoming audio.
 
 ## Build
 
 Requirements:
-
 - JDK 17
 - Android SDK Platform 35
 - Android NDK `27.2.12479018`
 - CMake `3.22.1`
 - Gradle `8.9`
 
-Build and test:
+Commands:
 
     gradle --no-daemon :app:testDebugUnitTest
     gradle --no-daemon :app:assembleDebug
 
-The native build uses CMake FetchContent to fetch whisper.cpp tag `v1.7.1` and compiles the JNI bridge for `arm64-v8a` and `x86_64`.
+The CMake build fetches whisper.cpp tag `v1.7.1`. GitHub Actions runs unit tests, builds the debug APK, and uploads the artifact named `Ajmat-VoiceFlow-debug`.
 
-The debug APK is written to:
+APK output:
 
     app/build/outputs/apk/debug/app-debug.apk
 
-GitHub Actions runs the unit tests and APK build on pushes and pull requests, then uploads the APK as the `Ajmat-VoiceFlow-debug` workflow artifact.
+## Important limitations
 
-## Model sources and licenses
-
-- Whisper.cpp: https://github.com/ggml-org/whisper.cpp (MIT)
-- Quantized multilingual models: https://huggingface.co/ggerganov/whisper.cpp (MIT)
-
-The app downloads official model files at first use. Model files are not committed to this repository.
-
-## Notes
-
-- Transcription performance depends on the handset CPU, available RAM, recording length, microphone quality, and chosen model.
-- Auto language detection is the best starting option for mixed Hindi-English speech. Mixed-language output quality can still vary with accent and code-switching.
-- The keyboard uses Android's microphone permission. Users must enable it from the app before recording from the IME.
-- No physical handset is available in the build environment, so real-device microphone, keyboard insertion, and thermal/performance testing must be completed on an Android phone.
+- On-device recognition speed depends on the phone CPU, RAM, recording length, and model. Small Q5 may take longer on some devices; the floating panel shows elapsed processing time and the in-app logs capture exact timings.
+- Third-party provider visibility depends on Android/Samsung Voice Input settings. The system provider and floating panel are independent routes.
+- A physical Samsung handset is needed to verify Samsung's provider list, overlay behaviour, accessibility paste, and real microphone performance.

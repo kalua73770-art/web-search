@@ -2,11 +2,16 @@ package com.ajmat.voiceflow
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.inputmethod.InputMethodManager
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -17,25 +22,36 @@ import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import com.ajmat.voiceflow.logging.VoiceFlowLog
+import com.ajmat.voiceflow.overlay.VoiceFlowOverlayService
 import com.ajmat.voiceflow.speech.ModelCatalog
 import com.ajmat.voiceflow.speech.ModelDownloader
 import java.io.File
 
 class MainActivity : Activity() {
     private val preferences by lazy { getSharedPreferences("voiceflow", MODE_PRIVATE) }
-    private lateinit var status: TextView
+    private lateinit var modelStatus: TextView
+    private lateinit var permissionStatus: TextView
     private lateinit var progress: ProgressBar
     private lateinit var modelPicker: Spinner
     private lateinit var endpointInput: EditText
     private lateinit var timeoutLabel: TextView
     private lateinit var timeoutSeek: SeekBar
     private lateinit var downloadButton: Button
+    private lateinit var overlayButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        VoiceFlowLog.installCrashHandler(applicationContext)
+        VoiceFlowLog.info(this, "Ajmat VoiceFlow v2 settings opened.")
         buildScreen()
-        requestMicrophonePermissionIfNeeded()
+        requestPermissionsIfNeeded()
         refreshStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::permissionStatus.isInitialized) updatePermissionStatus()
     }
 
     private fun buildScreen() {
@@ -46,10 +62,11 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { addView(content) }
 
         content.addView(label("Ajmat VoiceFlow", 27f, true))
-        content.addView(label("Hindi • English • Hinglish", 15f, false))
-        content.addView(space(18))
-        content.addView(label("1. Choose your offline model", 18f, true))
+        content.addView(label("Use your Samsung Keyboard. VoiceFlow is a voice tool, not a replacement keyboard.", 15f, false))
+        content.addView(space(14))
 
+        content.addView(label("1. Prepare offline speech recognition", 18f, true))
+        content.addView(label("Choose the multilingual model. Small Q5 is more accurate; Tiny Q5 is lighter and faster to load.", 13f, false))
         modelPicker = Spinner(this)
         val labels = ModelCatalog.models.map { it.title + " (" + it.approximateSize + ")" }
         modelPicker.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
@@ -57,22 +74,65 @@ class MainActivity : Activity() {
         modelPicker.setSelection(ModelCatalog.models.indexOfFirst { it.id == savedId }.coerceAtLeast(0))
         content.addView(modelPicker)
 
-        downloadButton = button("Download selected model")
+        downloadButton = button("Download / verify selected model")
         downloadButton.setOnClickListener { downloadSelectedModel() }
         content.addView(downloadButton)
+
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
-            visibility = ProgressBar.GONE
+            visibility = View.GONE
         }
         content.addView(progress)
-        content.addView(space(8))
-        status = label("Checking model…", 14f, false)
-        content.addView(status)
+        modelStatus = label("Checking model…", 13f, false)
+        content.addView(modelStatus)
 
-        content.addView(space(22))
-        content.addView(label("2. Optional online fallback", 18f, true))
+        content.addView(space(18))
+        content.addView(label("2. Start floating voice typing", 18f, true))
         content.addView(label(
-            "Leave this blank for fully offline typing. To use online-first recognition, enter your own HTTPS endpoint that accepts multipart audio and returns {\"text\":\"…\"}. If the request fails or times out, VoiceFlow automatically uses the downloaded offline model.",
+            "Keep Samsung Keyboard selected. Open any app and place the cursor in a text box. Then start this floating mic panel, speak, and press Stop. VoiceFlow copies the transcript and can paste it into the focused field.",
+            13f,
+            false
+        ))
+        permissionStatus = label("", 13f, false)
+        content.addView(permissionStatus)
+
+        overlayButton = button("Start floating voice panel")
+        overlayButton.setOnClickListener { startOverlay() }
+        content.addView(overlayButton)
+
+        content.addView(button("Allow Display over other apps").apply {
+            setOnClickListener { openOverlayPermissionSettings() }
+        })
+
+        content.addView(space(18))
+        content.addView(label("3. Optional Samsung / Android voice input provider", 18f, true))
+        content.addView(label(
+            "VoiceFlow also registers as an Android speech-recognition service. Open system Voice Input settings and select Ajmat VoiceFlow if Android/Samsung lists it. Some Samsung Keyboard versions only allow Samsung or Google voice providers; in that case use the floating panel above. Samsung Keyboard itself is never replaced.",
+            13f,
+            false
+        ))
+        content.addView(button("Open system Voice Input settings").apply {
+            setOnClickListener { openVoiceInputSettings() }
+        })
+
+        content.addView(space(18))
+        content.addView(label("4. Optional one-tap paste helper", 18f, true))
+        content.addView(label(
+            "Enable VoiceFlow Paste Helper in Accessibility settings to let the floating panel paste into the currently focused text field. It does not read or save screen contents. Without it, the transcript stays on your clipboard and you can use Samsung Keyboard's Paste command.",
+            13f,
+            false
+        ))
+        content.addView(button("Enable VoiceFlow Paste Helper").apply {
+            setOnClickListener {
+                VoiceFlowLog.info(this@MainActivity, "Opening Accessibility settings at user request.")
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        })
+
+        content.addView(space(18))
+        content.addView(label("5. Optional online fallback", 18f, true))
+        content.addView(label(
+            "Leave this empty for fully offline recognition. To use online-first mode, enter your own HTTPS endpoint that accepts multipart fields audio and language and returns JSON {"text":"…"}. Errors/timeouts fall back to the downloaded offline model.",
             13f,
             false
         ))
@@ -81,13 +141,12 @@ class MainActivity : Activity() {
             setSingleLine(true)
             textSize = 14f
             setText(preferences.getString("endpoint", ""))
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_URI
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
         }
         content.addView(endpointInput)
 
         val savedTimeout = (preferences.getInt("timeout_ms", 20_000) / 1000).coerceIn(5, 60)
-        timeoutLabel = label("Online timeout: " + savedTimeout + "s", 14f, false)
+        timeoutLabel = label("Online timeout: " + savedTimeout + "s", 13f, false)
         content.addView(timeoutLabel)
         timeoutSeek = SeekBar(this).apply {
             max = 55
@@ -101,57 +160,147 @@ class MainActivity : Activity() {
             })
         }
         content.addView(timeoutSeek)
-
-        content.addView(button("Save settings").apply {
-            setOnClickListener {
-                val endpoint = endpointInput.text.toString().trim()
-                if (endpoint.isNotEmpty() && !endpoint.startsWith("https://")) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Use an HTTPS endpoint so audio is encrypted in transit.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    return@setOnClickListener
-                }
-                preferences.edit()
-                    .putString("endpoint", endpoint)
-                    .putInt("timeout_ms", (timeoutSeek.progress + 5) * 1000)
-                    .apply()
-                Toast.makeText(this@MainActivity, "Settings saved.", Toast.LENGTH_SHORT).show()
-            }
+        content.addView(button("Save online settings").apply {
+            setOnClickListener { saveSettings() }
         })
 
-        content.addView(space(22))
-        content.addView(label("3. Enable the keyboard", 18f, true))
+        content.addView(space(18))
+        content.addView(label("6. Diagnostics", 18f, true))
         content.addView(label(
-            "Open Android keyboard settings, enable Ajmat VoiceFlow Keyboard, then select it from the keyboard picker in any app. Tap the microphone key to start and stop dictation.",
+            "VoiceFlow records app status, timings, audio byte counts, model failures, and full exception details here. It does not log your spoken words or save recordings.",
             13f,
             false
         ))
-        content.addView(button("Open input method settings").apply {
-            setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+        content.addView(button("View logs and diagnostics").apply {
+            setOnClickListener { showLogs() }
         })
-        content.addView(button("Choose Ajmat VoiceFlow keyboard").apply {
+        content.addView(button("Copy diagnostic logs").apply {
             setOnClickListener {
-                val manager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-                manager.showInputMethodPicker()
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Ajmat VoiceFlow diagnostics", VoiceFlowLog.read(this@MainActivity)))
+                Toast.makeText(this@MainActivity, "Logs copied. Share them when reporting an error.", Toast.LENGTH_LONG).show()
             }
         })
-        content.addView(space(12))
+        content.addView(button("Clear diagnostic logs").apply {
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Clear logs?")
+                    .setMessage("This removes the local diagnostic history.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Clear") { _, _ ->
+                        VoiceFlowLog.clear(this@MainActivity)
+                        Toast.makeText(this@MainActivity, "Logs cleared.", Toast.LENGTH_SHORT).show()
+                    }
+                    .show()
+            }
+        })
+
+        content.addView(space(14))
         content.addView(label(
-            "Privacy: audio is recorded only after you tap the mic. With no online endpoint, transcription runs on this phone. Temporary audio is deleted after processing.",
+            "Privacy: audio is recorded only after you start the mic. Temporary files are deleted after recognition. Offline mode sends no audio over the network.",
             12f,
             false
         ))
         setContentView(scroll)
     }
 
+    private fun saveSettings() {
+        val endpoint = endpointInput.text.toString().trim()
+        if (endpoint.isNotEmpty() && !endpoint.startsWith("https://")) {
+            Toast.makeText(this, "Online endpoint must start with https://", Toast.LENGTH_LONG).show()
+            return
+        }
+        preferences.edit()
+            .putString("endpoint", endpoint)
+            .putInt("timeout_ms", (timeoutSeek.progress + 5) * 1000)
+            .apply()
+        VoiceFlowLog.info(this, "Online settings saved; endpointConfigured=" + endpoint.isNotEmpty() + ".")
+        Toast.makeText(this, "Settings saved.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun startOverlay() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 7001)
+            Toast.makeText(this, "Allow microphone permission, then tap Start again.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
+        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
+        val modelFile = File(File(filesDir, "models"), filename)
+        if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
+            Toast.makeText(this, "Download the offline model first.", Toast.LENGTH_LONG).show()
+            VoiceFlowLog.warn(this, "Overlay launch blocked: selected model is not installed.")
+            return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            openOverlayPermissionSettings()
+            Toast.makeText(this, "Allow Display over other apps, then tap Start again.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val intent = Intent(this, VoiceFlowOverlayService::class.java)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            VoiceFlowLog.info(this, "User requested floating voice panel.")
+        } catch (error: Exception) {
+            VoiceFlowLog.error(this, "Unable to start floating voice panel.", error)
+            Toast.makeText(this, error.message ?: "Could not start VoiceFlow.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openOverlayPermissionSettings() {
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + packageName)
+                )
+            )
+        } catch (error: Exception) {
+            VoiceFlowLog.error(this, "Could not open overlay permission settings.", error)
+            Toast.makeText(this, "Open Settings > Apps > Special access > Display over other apps.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openVoiceInputSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+        } catch (error: Exception) {
+            VoiceFlowLog.error(this, "Could not open Voice Input settings.", error)
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+    }
+
+    private fun showLogs() {
+        val text = TextView(this).apply {
+            this.text = VoiceFlowLog.read(this@MainActivity)
+            textSize = 11f
+            setTextIsSelectable(true)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        val scroll = ScrollView(this).apply {
+            addView(text)
+            layoutParams = LinearLayout.LayoutParams(-1, dp(440))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("VoiceFlow diagnostics")
+            .setView(scroll)
+            .setPositiveButton("Close", null)
+            .setNeutralButton("Copy") { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("VoiceFlow logs", text.text))
+                Toast.makeText(this, "Logs copied.", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
     private fun downloadSelectedModel() {
         val model = ModelCatalog.models[modelPicker.selectedItemPosition]
         downloadButton.isEnabled = false
-        progress.visibility = ProgressBar.VISIBLE
+        progress.visibility = View.VISIBLE
         progress.progress = 0
-        status.text = "Preparing " + model.title + "…"
+        modelStatus.text = "Downloading " + model.title + "…"
+        VoiceFlowLog.info(this, "Model download started: " + model.id + ".")
 
         Thread {
             try {
@@ -160,43 +309,60 @@ class MainActivity : Activity() {
                         if (total > 0L) {
                             progress.progress = ((downloaded * 100) / total).toInt().coerceIn(0, 100)
                         }
-                        status.text = "Downloaded " + (downloaded / 1_000_000) + " MB"
+                        modelStatus.text = "Downloaded " + (downloaded / 1_000_000) + " MB"
                     }
                 }
                 preferences.edit()
                     .putString("model_id", model.id)
                     .putString("model_file", file.name)
                     .apply()
+                VoiceFlowLog.info(this, "Model download/verification complete: " + model.id + ", bytes=" + file.length() + ".")
                 runOnUiThread {
                     progress.progress = 100
-                    status.text = "Ready: " + file.name
+                    modelStatus.text = "Ready: " + model.title
                     downloadButton.isEnabled = true
                     Toast.makeText(this, "Offline model is ready.", Toast.LENGTH_LONG).show()
                 }
             } catch (error: Exception) {
+                VoiceFlowLog.error(this, "Model download failed: " + model.id + ".", error)
                 runOnUiThread {
-                    status.text = "Download error: " + (error.message ?: "unknown error")
+                    modelStatus.text = "Download error: " + (error.message ?: "unknown error")
                     downloadButton.isEnabled = true
-                    progress.visibility = ProgressBar.GONE
+                    progress.visibility = View.GONE
                 }
             }
         }.start()
     }
 
     private fun refreshStatus() {
+        if (!::modelStatus.isInitialized) return
         val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
         val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
         val file = File(File(filesDir, "models"), filename)
-        status.text = if (file.exists() && file.length() >= model.minimumBytes) {
+        modelStatus.text = if (file.exists() && file.length() >= model.minimumBytes) {
             "Offline model ready: " + model.title
         } else {
             "Offline model not downloaded yet."
         }
+        updatePermissionStatus()
     }
 
-    private fun requestMicrophonePermissionIfNeeded() {
+    private fun updatePermissionStatus() {
+        if (!::permissionStatus.isInitialized) return
+        val microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val overlay = Settings.canDrawOverlays(this)
+        permissionStatus.text = "Microphone: " + (if (microphone) "allowed" else "not allowed") +
+            "  •  Display over apps: " + (if (overlay) "allowed" else "not allowed")
+    }
+
+    private fun requestPermissionsIfNeeded() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 7001)
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7002)
         }
     }
 
