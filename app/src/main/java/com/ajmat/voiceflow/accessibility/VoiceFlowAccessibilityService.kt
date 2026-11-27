@@ -31,6 +31,8 @@ class VoiceFlowAccessibilityService : AccessibilityService() {
         updateKeyboardState()
     }
 
+    fun refreshKeyboardState() = updateKeyboardState()
+
     private fun updateKeyboardState() {
         try {
             val visibleKeyboard = windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
