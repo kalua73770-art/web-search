@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -123,22 +124,18 @@ class VoiceFlowOverlayService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setBackgroundColor(0xFFF7F9FA.toInt())
-            elevation = dp(10).toFloat()
-        }
-        val heading = TextView(this).apply {
-            text = "Ajmat VoiceFlow"
-            textSize = 15f
-            setTextColor(0xFF162D2B.toInt())
-            setPadding(0, 0, 0, dp(5))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            setBackgroundColor(0xEE172B2A.toInt())
+            elevation = dp(12).toFloat()
         }
         statusView = TextView(this).apply {
-            text = "Ready. Keep your cursor in a text field."
-            textSize = 12f
-            setTextColor(0xFF4D5D5B.toInt())
-            setPadding(0, 0, 0, dp(6))
+            text = "Voice"
+            textSize = 10f
+            setTextColor(0xFFFFFFFF.toInt())
+            maxLines = 1
+            setPadding(dp(4), 0, dp(4), 0)
         }
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -146,42 +143,41 @@ class VoiceFlowOverlayService : Service() {
             isIndeterminate = false
             visibility = ProgressBar.GONE
         }
-
-        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         startStopButton = Button(this).apply {
-            text = "🎙 Start"
+            text = "🎙"
+            contentDescription = "Start voice typing"
+            textSize = 17f
+            minWidth = dp(48)
             isAllCaps = false
+            setPadding(0, 0, 0, 0)
             setOnClickListener { if (recording) stopAndTranscribe() else startRecording() }
         }
         cancelButton = Button(this).apply {
-            text = "Cancel"
+            text = "×"
+            contentDescription = "Cancel recognition"
+            minWidth = dp(38)
             isAllCaps = false
             isEnabled = false
-            setOnClickListener { cancelTranscription() }
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { if (processing) cancelTranscription() else stopEverything() }
         }
         pasteButton = Button(this).apply {
-            text = "Paste"
+            text = "✓"
+            contentDescription = "Insert transcript"
+            minWidth = dp(38)
             isAllCaps = false
             isEnabled = false
+            setPadding(0, 0, 0, 0)
             setOnClickListener { pasteTranscript() }
         }
-        val closeButton = Button(this).apply {
-            text = "×"
-            isAllCaps = false
-            setOnClickListener { stopEverything() }
-        }
-
-        buttons.addView(startStopButton, weighted(1.1f))
-        buttons.addView(cancelButton, weighted(0.85f))
-        buttons.addView(pasteButton, weighted(0.85f))
-        buttons.addView(closeButton, weighted(0.4f))
-        panel.addView(heading)
-        panel.addView(statusView)
-        panel.addView(progressBar)
-        panel.addView(buttons)
+        panel.addView(statusView, LinearLayout.LayoutParams(dp(48), dp(36)))
+        panel.addView(startStopButton, LinearLayout.LayoutParams(dp(48), dp(42)))
+        panel.addView(cancelButton, LinearLayout.LayoutParams(dp(38), dp(42)))
+        panel.addView(pasteButton, LinearLayout.LayoutParams(dp(38), dp(42)))
+        overlayView = panel
 
         val layout = WindowManager.LayoutParams(
-            dp(330),
+            dp(184),
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -196,15 +192,46 @@ class VoiceFlowOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(10)
-            y = dp(150)
+            y = dp(180)
+        }
+
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0
+        var startY = 0
+        var moved = false
+        statusView?.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startX = layout.x
+                    startY = layout.y
+                    moved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downRawX).toInt()
+                    val dy = (event.rawY - downRawY).toInt()
+                    if (kotlin.math.abs(dx) + kotlin.math.abs(dy) > dp(4)) moved = true
+                    if (moved) {
+                        layout.x = (startX - dx).coerceAtLeast(0)
+                        layout.y = (startY + dy).coerceAtLeast(0)
+                        try { windowManager?.updateViewLayout(panel, layout) } catch (_: Exception) { }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> true
+                else -> false
+            }
         }
 
         try {
             windowManager?.addView(panel, layout)
-            overlayView = panel
-            VoiceFlowLog.info(this, "Floating panel attached; it does not take focus from Samsung Keyboard.")
+            VoiceFlowLog.info(this, "Compact draggable voice control attached; Samsung Keyboard focus is preserved.")
         } catch (error: Exception) {
-            VoiceFlowLog.error(this, "Unable to attach floating panel.", error)
+            overlayView = null
+            VoiceFlowLog.error(this, "Unable to attach compact floating control.", error)
             finishAndStop()
         }
     }
@@ -216,7 +243,7 @@ class VoiceFlowOverlayService : Service() {
         }
 
         val preferences = getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
-        val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
+        val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
         val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
         val modelFile = File(File(filesDir, "models"), filename)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
