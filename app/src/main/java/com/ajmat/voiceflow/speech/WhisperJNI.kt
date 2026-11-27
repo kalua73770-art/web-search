@@ -11,7 +11,8 @@ internal object WhisperJNI {
         contextPointer: Long,
         wavPath: String,
         numThreads: Int,
-        language: String
+        language: String,
+        detectLanguage: Boolean
     ): String
 
     /** Cooperative native abort, checked between Whisper compute graphs. */
