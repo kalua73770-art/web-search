@@ -3,6 +3,8 @@ package com.ajmat.voiceflow.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import com.ajmat.voiceflow.overlay.VoiceFlowOverlayService
 import com.ajmat.voiceflow.logging.VoiceFlowLog
 
 /**
@@ -19,11 +21,31 @@ class VoiceFlowAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        VoiceFlowLog.info(this, "Paste helper accessibility service connected.")
+        VoiceFlowLog.info(this, "Keyboard-aware paste helper connected.")
+        updateKeyboardState()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Intentionally do not read events or window text.
+        // Detect only whether an editable field and the software keyboard are visible.
+        // No view text, labels, typed content, or window titles are read or stored.
+        updateKeyboardState()
+    }
+
+    private fun updateKeyboardState() {
+        try {
+            val visibleKeyboard = windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            val focusedEditor = windows
+                .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .any { window ->
+                    val node = window.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    val editable = node?.isEditable == true
+                    node?.recycle()
+                    editable
+                }
+            VoiceFlowOverlayService.onKeyboardVisibilityChanged(visibleKeyboard && focusedEditor)
+        } catch (error: Exception) {
+            VoiceFlowLog.warn(this, "Could not determine keyboard visibility: " + (error.message ?: "unknown error"))
+        }
     }
 
     override fun onInterrupt() {
@@ -31,10 +53,15 @@ class VoiceFlowAccessibilityService : AccessibilityService() {
     }
 
     fun pasteIntoFocusedField(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val focused = windows
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .asSequence()
+            .mapNotNull { it.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+            .firstOrNull { it.isEditable }
+            ?: return false
         val pasted = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-        VoiceFlowLog.info(this, "Clipboard paste action result=" + pasted + ".")
+        VoiceFlowLog.info(this, "Focused editable field paste result=" + pasted + ".")
+        focused.recycle()
         return pasted
     }
 
