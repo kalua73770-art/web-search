@@ -4,14 +4,22 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
+import com.ajmat.voiceflow.logging.VoiceFlowLog
 import java.io.File
 import java.io.RandomAccessFile
 
 /**
- * Records mono 16 kHz PCM straight to a temporary WAV file. Long recordings
- * are streamed to disk instead of being retained in memory.
+ * Records mono 16 kHz PCM into a temporary WAV file. The capture loop writes
+ * continuously to disk, keeping long recordings out of the Java heap.
+ *
+ * Optional attributionContext is supplied by Android RecognitionService callers
+ * on API 31+ so microphone access is attributed to the voice-input caller.
  */
-class AudioRecorder(private val context: Context) {
+class AudioRecorder(
+    private val context: Context,
+    private val attributionContext: Context? = null
+) {
     companion object {
         private const val SAMPLE_RATE = 16_000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
@@ -25,22 +33,40 @@ class AudioRecorder(private val context: Context) {
     private var output: RandomAccessFile? = null
     @Volatile private var dataBytes = 0L
     @Volatile private var captureError: Throwable? = null
+    private var recordingStartedAt = 0L
 
     fun start() {
         check(!recording) { "Already recording." }
         val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-        check(minimum > 0) { "AudioRecord does not support 16 kHz mono capture on this device." }
+        check(minimum > 0) { "This device does not support 16 kHz mono microphone capture (code " + minimum + ")." }
 
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            maxOf(minimum * 2, SAMPLE_RATE)
-        )
+        val bufferSize = maxOf(minimum * 2, SAMPLE_RATE)
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && attributionContext != null) {
+            AudioRecord.Builder()
+                .setContext(attributionContext)
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(CHANNEL_CONFIG)
+                        .setEncoding(AUDIO_FORMAT)
+                        .build()
+                )
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+        } else {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+        }
+
         check(recorder.state == AudioRecord.STATE_INITIALIZED) {
             recorder.release()
-            "Microphone could not be initialized."
+            "Microphone could not be initialized by Android."
         }
 
         val directory = File(context.cacheDir, "voiceflow-audio").apply { mkdirs() }
@@ -54,8 +80,14 @@ class AudioRecorder(private val context: Context) {
         output = wav
         dataBytes = 0L
         captureError = null
-        recording = true
+        recordingStartedAt = System.currentTimeMillis()
         recorder.startRecording()
+        check(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+            cancel()
+            "Android did not enter the microphone recording state."
+        }
+        recording = true
+        VoiceFlowLog.info(context, "Microphone recording started at 16 kHz mono.")
 
         captureThread = Thread({
             val samples = ShortArray(2048)
@@ -77,7 +109,7 @@ class AudioRecorder(private val context: Context) {
                         count == AudioRecord.ERROR_INVALID_OPERATION ||
                         count == AudioRecord.ERROR_BAD_VALUE
                     ) {
-                        break
+                        throw IllegalStateException("Microphone read failed with AudioRecord code " + count + ".")
                     }
                 }
             } catch (error: Throwable) {
@@ -93,7 +125,10 @@ class AudioRecorder(private val context: Context) {
         try { audioRecord?.stop() } catch (_: IllegalStateException) { }
 
         captureThread?.join(5_000)
-        check(captureThread?.isAlive != true) { "Audio capture did not stop cleanly." }
+        check(captureThread?.isAlive != true) {
+            cancel()
+            "Microphone capture thread did not stop within 5 seconds."
+        }
         audioRecord?.release()
         audioRecord = null
         captureThread = null
@@ -101,12 +136,13 @@ class AudioRecorder(private val context: Context) {
         val wav = output ?: throw IllegalStateException("Audio output is unavailable.")
         val file = outputFile ?: throw IllegalStateException("Audio file is unavailable.")
         val bytes = dataBytes
+        val durationMs = System.currentTimeMillis() - recordingStartedAt
         if (bytes < 3_200L) {
             wav.close()
             file.delete()
             output = null
             outputFile = null
-            throw IllegalStateException("Recording was too short. Please speak for a little longer.")
+            throw IllegalStateException("No usable microphone audio was captured (" + bytes + " bytes). Check microphone access and try again.")
         }
 
         wav.seek(0)
@@ -127,9 +163,11 @@ class AudioRecorder(private val context: Context) {
         output = null
         outputFile = null
 
+        VoiceFlowLog.info(context, "Recording stopped; durationMs=" + durationMs + ", pcmBytes=" + bytes + ".")
         captureError?.let {
             file.delete()
-            throw IllegalStateException("Microphone capture failed: " + it.message)
+            VoiceFlowLog.error(context, "Microphone capture thread failed.", it)
+            throw IllegalStateException("Microphone capture failed: " + it.message, it)
         }
         return file
     }
@@ -148,6 +186,7 @@ class AudioRecorder(private val context: Context) {
         output = null
         outputFile?.delete()
         outputFile = null
+        VoiceFlowLog.info(context, "Recording cancelled; temporary file removed.")
     }
 
     private fun writeAscii(file: RandomAccessFile, value: String) {
