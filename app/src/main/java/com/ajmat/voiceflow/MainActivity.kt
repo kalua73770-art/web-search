@@ -275,8 +275,7 @@ class MainActivity : Activity() {
             return
         }
         val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val modelFile = File(File(filesDir, "models"), filename)
+        val modelFile = File(File(filesDir, "models"), model.fileName)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
             Toast.makeText(this, "Download the offline model first.", Toast.LENGTH_LONG).show()
             VoiceFlowLog.warn(this, "Overlay launch blocked: selected model is not installed.")
