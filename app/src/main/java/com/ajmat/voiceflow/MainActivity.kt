@@ -276,6 +276,7 @@ class MainActivity : Activity() {
             return
         }
 
+        preferences.edit().putBoolean("overlay_enabled", true).apply()
         val intent = Intent(this, VoiceFlowOverlayService::class.java)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
