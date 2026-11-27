@@ -158,7 +158,7 @@ class MainActivity : Activity() {
         content.addView(space(18))
         content.addView(label("5. Optional online fallback", 18f, true))
         content.addView(label(
-            "Leave this empty for fully offline recognition. To use online-first mode, enter your own HTTPS endpoint that accepts multipart fields audio and language and returns JSON {"text":"…"}. Errors/timeouts fall back to the downloaded offline model.",
+            "Leave this empty for fully offline recognition. To use online-first mode, enter your own HTTPS endpoint that accepts multipart fields audio and language and returns a JSON response with a text field. Errors/timeouts fall back to the downloaded offline model.",
             13f,
             false
         ))
