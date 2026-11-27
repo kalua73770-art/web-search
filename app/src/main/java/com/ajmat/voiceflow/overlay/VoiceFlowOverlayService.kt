@@ -177,10 +177,17 @@ class VoiceFlowOverlayService : Service() {
             isAllCaps = false
             isEnabled = true
             setPadding(0, 0, 0, 0)
-            setOnClickListener { if (processing) cancelTranscription() else hideOverlay() }
+            setOnClickListener {
+                when {
+                    processing -> cancelTranscription()
+                    recording -> stopAndTranscribe()
+                    else -> hideOverlay()
+                }
+            }
         }
         pasteButton = Button(this).apply {
             text = "✓"
+            isEnabled = lastTranscript.isNotBlank()
             contentDescription = "Insert transcript"
             minWidth = dp(38)
             isAllCaps = false
@@ -464,6 +471,7 @@ class VoiceFlowOverlayService : Service() {
     }
 
     private fun finishAndStop() {
+        getSharedPreferences("voiceflow", Context.MODE_PRIVATE).edit().putBoolean("overlay_enabled", false).apply()
         mainHandler.removeCallbacks(progressTicker)
         hideOverlay()
         processing = false
