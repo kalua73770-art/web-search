@@ -154,10 +154,10 @@ class VoiceFlowOverlayService : Service() {
         }
         cancelButton = Button(this).apply {
             text = "×"
-            contentDescription = "Cancel recognition"
+            contentDescription = "Cancel recognition / close"
             minWidth = dp(38)
             isAllCaps = false
-            isEnabled = false
+            isEnabled = true
             setPadding(0, 0, 0, 0)
             setOnClickListener { if (processing) cancelTranscription() else stopEverything() }
         }
@@ -260,10 +260,10 @@ class VoiceFlowOverlayService : Service() {
             progressBar?.progress = 0
             progressBar?.visibility = ProgressBar.GONE
             pasteButton?.isEnabled = false
-            cancelButton?.isEnabled = false
+            cancelButton?.isEnabled = true
             startStopButton?.text = "■ Stop"
             startStopButton?.isEnabled = true
-            setStatus("Listening… speak, then press Stop.")
+            setStatus("Listening")
         } catch (error: Exception) {
             recorder?.cancel()
             recorder = null
