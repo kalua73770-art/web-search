@@ -120,6 +120,7 @@ class VoiceFlowOverlayService : Service() {
                 startForeground(NOTIFICATION_ID, buildNotification())
             }
         } catch (error: Exception) {
+            getSharedPreferences("voiceflow", Context.MODE_PRIVATE).edit().putBoolean("overlay_enabled", false).apply()
             VoiceFlowLog.error(this, "Could not start microphone foreground service.", error)
             Toast.makeText(this, "VoiceFlow could not start. Open the app and allow microphone access.", Toast.LENGTH_LONG).show()
             stopSelf()
@@ -280,8 +281,7 @@ class VoiceFlowOverlayService : Service() {
 
         val preferences = getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
         val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val modelFile = File(File(filesDir, "models"), filename)
+        val modelFile = File(File(filesDir, "models"), model.fileName)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
             setStatus("Offline model missing. Download it from the app first.")
             VoiceFlowLog.warn(this, "Recording blocked because selected model is missing.")
