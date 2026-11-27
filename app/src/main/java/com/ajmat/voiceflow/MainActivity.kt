@@ -140,9 +140,19 @@ class MainActivity : Activity() {
         permissionStatus = label("", 13f, false)
         content.addView(permissionStatus)
 
-        overlayButton = button("Start floating voice panel")
+        overlayButton = button("Enable / show floating mic")
         overlayButton.setOnClickListener { startOverlay() }
         content.addView(overlayButton)
+        content.addView(button("Disable floating voice service").apply {
+            setOnClickListener {
+                try {
+                    startService(Intent(this@MainActivity, VoiceFlowOverlayService::class.java).setAction(VoiceFlowOverlayService.ACTION_STOP))
+                    Toast.makeText(this@MainActivity, "VoiceFlow background service disabled.", Toast.LENGTH_SHORT).show()
+                } catch (error: Exception) {
+                    VoiceFlowLog.error(this@MainActivity, "Could not disable floating voice service.", error)
+                }
+            }
+        })
 
         content.addView(button("Allow Display over other apps").apply {
             setOnClickListener { openOverlayPermissionSettings() }
@@ -387,8 +397,7 @@ class MainActivity : Activity() {
     private fun refreshStatus() {
         if (!::modelStatus.isInitialized) return
         val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val file = File(File(filesDir, "models"), filename)
+        val file = File(File(filesDir, "models"), model.fileName)
         modelStatus.text = if (file.exists() && file.length() >= model.minimumBytes) {
             "Offline model ready: " + model.title
         } else {
