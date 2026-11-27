@@ -19,6 +19,15 @@ class RecognitionPolicyTest {
     }
 
     @Test
+    fun localeLanguageMapsToWhisperLanguage() {
+        assertEquals("hi", RecognitionPolicy.languageFromLocale("hi-IN"))
+        assertEquals("en", RecognitionPolicy.languageFromLocale("en-IN"))
+        assertEquals("en", RecognitionPolicy.languageFromLocale("en-US"))
+        assertEquals("auto", RecognitionPolicy.languageFromLocale(null))
+        assertEquals("auto", RecognitionPolicy.languageFromLocale(""))
+    }
+
+    @Test
     fun languageSelectionIsNormalized() {
         assertEquals("hi", RecognitionPolicy.normalizeLanguage(" Hindi "))
         assertEquals("en", RecognitionPolicy.normalizeLanguage("ENGLISH"))
