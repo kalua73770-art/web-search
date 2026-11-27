@@ -61,7 +61,8 @@ object WhisperEngine {
             throw IllegalStateException(cancelReason.get() ?: "Recognition cancelled by user.")
         }
 
-        val normalizedLanguage = RecognitionPolicy.normalizeLanguage(language)
+        val languageConfig = WhisperLanguagePolicy.forTranscription(language)
+        val normalizedLanguage = languageConfig.language
         val startedAt = System.currentTimeMillis()
         VoiceFlowLog.info(
             context,
@@ -108,7 +109,8 @@ object WhisperEngine {
                 contextPointer,
                 wavFile.absolutePath,
                 threads,
-                normalizedLanguage
+                normalizedLanguage,
+                languageConfig.detectLanguage
             )
             val elapsed = System.currentTimeMillis() - startedAt
             val reason = cancelReason.get()
