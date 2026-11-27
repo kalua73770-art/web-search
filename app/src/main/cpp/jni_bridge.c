@@ -5,11 +5,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <time.h>
 #include "whisper.h"
 
 #define TAG "AjmatVoiceFlow"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+
+static double monotonic_ms(void) {
+    struct timespec value;
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0.0;
+    return (double) value.tv_sec * 1000.0 + (double) value.tv_nsec / 1000000.0;
+}
 
 static atomic_bool g_cancel_requested = ATOMIC_VAR_INIT(false);
 static atomic_bool g_inference_running = ATOMIC_VAR_INIT(false);
@@ -140,6 +147,7 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
         return make_error(env, "Could not read input parameters.");
     }
 
+    const double audio_prepare_started_ms = monotonic_ms();
     FILE *file = fopen(path, "rb");
     if (file == NULL) {
         (*env)->ReleaseStringUTFChars(env, wav_path, path);
@@ -194,10 +202,20 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
         (*env)->ReleaseStringUTFChars(env, language, lang);
         return make_error(env, "Not enough memory for Whisper input.");
     }
+    double mean_square = 0.0;
+    float peak = 0.0f;
     for (int i = 0; i < sample_count; ++i) {
-        samples[i] = (float) pcm[i] / 32768.0f;
+        const float sample = (float) pcm[i] / 32768.0f;
+        samples[i] = sample;
+        mean_square += (double) sample * (double) sample;
+        const float magnitude = sample < 0.0f ? -sample : sample;
+        if (magnitude > peak) peak = magnitude;
     }
+    mean_square /= (double) sample_count;
     free(pcm);
+    LOGI("Audio prepared: samples=%d, seconds=%.2f, mean_square=%.7f, peak=%.5f, preprocessing_ms=%.1f",
+         sample_count, (double) sample_count / WHISPER_SAMPLE_RATE,
+         mean_square, peak, monotonic_ms() - audio_prepare_started_ms);
 
     struct whisper_context *context =
         (struct whisper_context *) (intptr_t) context_pointer;
@@ -235,7 +253,11 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
          sample_count, (double) sample_count / WHISPER_SAMPLE_RATE,
          run_params.n_threads, lang);
 
+    const double inference_started_ms = monotonic_ms();
     const int result = whisper_full(context, run_params, samples, sample_count);
+    const double inference_elapsed_ms = monotonic_ms() - inference_started_ms;
+    LOGI("Whisper inference stage completed in %.1f ms; native_result=%d",
+         inference_elapsed_ms, result);
     free(samples);
     atomic_store(&g_inference_running, false);
     (*env)->ReleaseStringUTFChars(env, language, lang);
@@ -251,6 +273,7 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
         return make_error(env, message);
     }
 
+    const double formatting_started_ms = monotonic_ms();
     const int segments = whisper_full_n_segments(context);
     if (segments <= 0) {
         atomic_store(&g_progress, 100);
@@ -272,7 +295,8 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
     }
 
     atomic_store(&g_progress, 100);
-    LOGI("whisper_full completed; segments=%d. Transcript content withheld from logs.", segments);
+    LOGI("Output formatting completed in %.1f ms; segments=%d. Transcript content withheld from logs.",
+         monotonic_ms() - formatting_started_ms, segments);
     jstring answer = (*env)->NewStringUTF(env, output);
     free(output);
     return answer;
