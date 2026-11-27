@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -34,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var permissionStatus: TextView
     private lateinit var progress: ProgressBar
     private lateinit var modelPicker: Spinner
+    private lateinit var languagePicker: Spinner
     private lateinit var endpointInput: EditText
     private lateinit var timeoutLabel: TextView
     private lateinit var timeoutSeek: SeekBar
@@ -85,6 +87,30 @@ class MainActivity : Activity() {
         content.addView(progress)
         modelStatus = label("Checking model…", 13f, false)
         content.addView(modelStatus)
+
+        content.addView(label("Recognition language", 14f, true))
+        languagePicker = Spinner(this)
+        val languageLabels = listOf("Auto detect (Hindi + English)", "Hindi only", "English only")
+        languagePicker.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, languageLabels)
+        val savedLanguage = preferences.getString("language", "auto")
+        languagePicker.setSelection(when (savedLanguage) {
+            "hi" -> 1
+            "en" -> 2
+            else -> 0
+        })
+        languagePicker.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val language = when (position) {
+                    1 -> "hi"
+                    2 -> "en"
+                    else -> "auto"
+                }
+                preferences.edit().putString("language", language).apply()
+                VoiceFlowLog.info(this@MainActivity, "Recognition language set to " + language + ".")
+            }
+        }
+        content.addView(languagePicker)
 
         content.addView(space(18))
         content.addView(label("2. Start floating voice typing", 18f, true))
