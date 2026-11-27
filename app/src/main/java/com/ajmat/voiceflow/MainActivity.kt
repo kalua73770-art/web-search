@@ -262,7 +262,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Allow microphone permission, then tap Start again.", Toast.LENGTH_LONG).show()
             return
         }
-        val model = ModelCatalog.byId(preferences.getString("model_id", "small-q5"))
+        val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
         val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
         val modelFile = File(File(filesDir, "models"), filename)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
