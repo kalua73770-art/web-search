@@ -126,7 +126,8 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_getSystemInfo(
 JNIEXPORT jstring JNICALL
 Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
         JNIEnv *env, jobject thiz, jlong context_pointer,
-        jstring wav_path, jint num_threads, jstring language) {
+        jstring wav_path, jint num_threads, jstring language,
+        jboolean detect_language) {
     (void) thiz;
     if (context_pointer == 0) return make_error(env, "Whisper model is not loaded.");
     if (wav_path == NULL || language == NULL) return make_error(env, "Missing audio path or language.");
@@ -210,8 +211,10 @@ Java_com_ajmat_voiceflow_speech_WhisperJNI_transcribeAudio(
     struct whisper_full_params run_params =
         whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     run_params.n_threads = (int) (num_threads > 0 ? num_threads : 2);
-    run_params.language = (strcmp(lang, "auto") == 0) ? NULL : lang;
-    run_params.detect_language = (strcmp(lang, "auto") == 0);
+    // "auto" triggers language detection and then continues transcription.
+    // detect_language=true is detection-only and returns before decoding text.
+    run_params.language = (strcmp(lang, "auto") == 0) ? "auto" : lang;
+    run_params.detect_language = (detect_language == JNI_TRUE);
     run_params.translate = false;
     run_params.print_special = false;
     run_params.print_progress = false;
