@@ -15,6 +15,16 @@ class ModelSelectionPolicyTest {
     }
 
     @Test
+    fun initial130UpgradeDefaultsToBaseEvenWhenSmallWasPreviouslySelected() {
+        assertEquals("base-q5", ModelSelectionPolicy.initialModelId("small-q5", false))
+    }
+
+    @Test
+    fun laterUserSelectionOfSmallIsPreserved() {
+        assertEquals("small-q5", ModelSelectionPolicy.initialModelId("small-q5", true))
+    }
+
+    @Test
     fun existingSmallSelectionIsPreserved() {
         assertEquals("small-q5", ModelSelectionPolicy.resolveModelId("small-q5"))
     }
