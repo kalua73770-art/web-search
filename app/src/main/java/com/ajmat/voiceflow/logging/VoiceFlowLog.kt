@@ -18,8 +18,8 @@ object VoiceFlowLog {
 
     fun info(context: Context, message: String) = write(context, "INFO", message, null)
     fun warn(context: Context, message: String) = write(context, "WARN", message, null)
-    fun error(context: Context, message: String, error: Throwable? = null) =
-        write(context, "ERROR", message, error)
+    fun error(context: Context, message: String, throwable: Throwable? = null) =
+        write(context, "ERROR", message, throwable)
 
     fun read(context: Context): String = synchronized(lock) {
         logFile(context).let { if (it.exists()) it.readText() else "No logs yet." }
@@ -32,13 +32,13 @@ object VoiceFlowLog {
 
     fun installCrashHandler(context: Context) {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            error(context, "Uncaught exception on " + thread.name, error)
-            previous?.uncaughtException(thread, error)
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            VoiceFlowLog.error(context, "Uncaught exception on " + thread.name, throwable)
+            previous?.uncaughtException(thread, throwable)
         }
     }
 
-    private fun write(context: Context, level: String, message: String, error: Throwable?) {
+    private fun write(context: Context, level: String, message: String, throwable: Throwable?) {
         synchronized(lock) {
             val file = logFile(context)
             file.parentFile?.mkdirs()
@@ -49,7 +49,7 @@ object VoiceFlowLog {
             }
             file.appendText(
                 formatter.format(LocalDateTime.now()) + " [" + level + "] " + message + "\n" +
-                    (error?.let { stackTrace(it) + "\n" } ?: "")
+                    (throwable?.let { stackTrace(it) + "\n" } ?: "")
             )
         }
     }
@@ -57,9 +57,9 @@ object VoiceFlowLog {
     private fun logFile(context: Context) =
         File(File(context.filesDir, "logs"), FILE_NAME)
 
-    private fun stackTrace(error: Throwable): String {
+    private fun stackTrace(throwable: Throwable): String {
         val writer = StringWriter()
-        error.printStackTrace(PrintWriter(writer))
+        throwable.printStackTrace(PrintWriter(writer))
         return writer.toString()
     }
 }
