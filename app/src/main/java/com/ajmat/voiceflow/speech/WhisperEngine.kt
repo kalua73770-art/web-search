@@ -34,9 +34,13 @@ object WhisperEngine {
         cancelRequested.set(false)
 
         val preferences = context.getSharedPreferences("voiceflow", Context.MODE_PRIVATE)
-        val model = ModelCatalog.byId(preferences.getString("model_id", "base-q5"))
-        val filename = preferences.getString("model_file", model.fileName) ?: model.fileName
-        val modelFile = File(File(context.filesDir, "models"), filename)
+        val savedModelId = preferences.getString("model_id", null)
+        val model = ModelCatalog.byId(savedModelId)
+        if (savedModelId != model.id) {
+            preferences.edit().putString("model_id", model.id).putString("model_file", model.fileName).apply()
+            VoiceFlowLog.info(context, "Model preference normalized to " + model.id + ".")
+        }
+        val modelFile = File(File(context.filesDir, "models"), model.fileName)
         if (!modelFile.isFile || modelFile.length() < model.minimumBytes) {
             throw IllegalStateException("Offline model is missing or incomplete. Open Ajmat VoiceFlow and download it again.")
         }
