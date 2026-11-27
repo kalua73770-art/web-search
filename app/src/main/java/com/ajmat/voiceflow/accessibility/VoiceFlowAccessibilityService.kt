@@ -39,9 +39,11 @@ class VoiceFlowAccessibilityService : AccessibilityService() {
             val focusedEditor = windows
                 .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
                 .any { window ->
-                    val node = window.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    val root = window.root ?: return@any false
+                    val node = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                     val editable = node?.isEditable == true
                     node?.recycle()
+                    root.recycle()
                     editable
                 }
             VoiceFlowOverlayService.onKeyboardVisibilityChanged(visibleKeyboard && focusedEditor)
@@ -55,15 +57,22 @@ class VoiceFlowAccessibilityService : AccessibilityService() {
     }
 
     fun pasteIntoFocusedField(): Boolean {
-        val focused = windows
-            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            .asSequence()
-            .mapNotNull { it.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
-            .firstOrNull { it.isEditable }
-            ?: return false
-        val pasted = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        var focused: AccessibilityNodeInfo? = null
+        for (window in windows) {
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val root = window.root ?: continue
+            val candidate = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            root.recycle()
+            if (candidate?.isEditable == true) {
+                focused = candidate
+                break
+            }
+            candidate?.recycle()
+        }
+        val target = focused ?: return false
+        val pasted = target.performAction(AccessibilityNodeInfo.ACTION_PASTE)
         VoiceFlowLog.info(this, "Focused editable field paste result=" + pasted + ".")
-        focused.recycle()
+        target.recycle()
         return pasted
     }
 
