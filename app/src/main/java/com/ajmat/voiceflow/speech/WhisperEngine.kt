@@ -104,7 +104,8 @@ object WhisperEngine {
 
         try {
             val available = Runtime.getRuntime().availableProcessors()
-            val threads = available.coerceIn(2, 6)
+            val threads = WhisperThreadPolicy.threadCount(available)
+            VoiceFlowLog.info(context, "Whisper CPU threads selected: " + threads + " of " + available + " available.")
             val result = WhisperJNI.transcribeAudio(
                 contextPointer,
                 wavFile.absolutePath,
