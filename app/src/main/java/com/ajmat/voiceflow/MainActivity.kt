@@ -121,7 +121,7 @@ class MainActivity : Activity() {
         content.addView(space(18))
         content.addView(label("2. Start floating voice typing", 18f, true))
         content.addView(label(
-            "Keep Samsung Keyboard selected. Open any app and place the cursor in a text box. Then start this floating mic panel, speak, and press Stop. VoiceFlow copies the transcript and can paste it into the focused field.",
+            "Keep Samsung Keyboard selected. Enable Paste Helper in Android Accessibility settings once, then start VoiceFlow once. The compact mic appears when the keyboard is open in an editable field. Tap the mic to speak; tap it again to finish. VoiceFlow transcribes and inserts the text. The foreground notification keeps the service active; microphone capture starts only after you tap the mic.",
             13f,
             false
         ))
@@ -148,9 +148,9 @@ class MainActivity : Activity() {
         })
 
         content.addView(space(18))
-        content.addView(label("4. Optional one-tap paste helper", 18f, true))
+        content.addView(label("4. Keyboard detection and automatic insertion", 18f, true))
         content.addView(label(
-            "Paste Helper is optional. If Android shows “App was denied access” for this sideloaded app, open App info, tap the three-dot menu, choose Allow restricted settings, then return here and enable the helper. Play Protect is separate and does not grant Accessibility access. Without Paste Helper, VoiceFlow still copies text and you can paste using Samsung Keyboard's clipboard.",
+            "Enable Ajmat VoiceFlow under Android Accessibility settings. This opt-in helper detects only whether a keyboard and an editable field are present, and pastes the final transcript into the focused field. It does not read or store what you type. If Android blocks the service for a sideloaded app, open App info > three-dot menu > Allow restricted settings, then enable VoiceFlow in Accessibility. Without this helper, manual floating mode and clipboard paste remain available.",
             13f,
             false
         ))
