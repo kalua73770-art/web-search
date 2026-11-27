@@ -15,6 +15,15 @@ object ModelCatalog {
 
     val models = listOf(
         ModelSpec(
+            id = "base-q5",
+            title = "Base Q5 — balanced Hindi + English",
+            fileName = "ggml-base-q5_1.bin",
+            downloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/" + REVISION + "/ggml-base-q5_1.bin",
+            expectedSha1 = "a3733eda680ef76256db5fc5dd9de8629e62c5e7",
+            minimumBytes = 55_000_000L,
+            approximateSize = "60 MB"
+        ),
+        ModelSpec(
             id = "small-q5",
             title = "Small Q5 — best accuracy",
             fileName = "ggml-small-q5_1.bin",
@@ -22,18 +31,9 @@ object ModelCatalog {
             expectedSha1 = "6fe57ddcfdd1c6b07cdcc73aaf620810ce5fc771",
             minimumBytes = 150_000_000L,
             approximateSize = "190 MB"
-        ),
-        ModelSpec(
-            id = "tiny-q5",
-            title = "Tiny Q5 — lighter / faster",
-            fileName = "ggml-tiny-q5_1.bin",
-            downloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/" + REVISION + "/ggml-tiny-q5_1.bin",
-            expectedSha1 = "2827a03e495b1ed3048ef28a6a4620537db4ee51",
-            minimumBytes = 25_000_000L,
-            approximateSize = "32 MB"
         )
     )
 
     fun byId(id: String?): ModelSpec =
-        models.firstOrNull { it.id == id } ?: models.first()
+        models.firstOrNull { it.id == ModelSelectionPolicy.resolveModelId(id) } ?: models.first()
 }
