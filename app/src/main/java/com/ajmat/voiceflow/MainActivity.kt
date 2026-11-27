@@ -45,11 +45,23 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VoiceFlowLog.installCrashHandler(applicationContext)
-        val savedModelId = preferences.getString("model_id", null)
-        val resolvedModelId = com.ajmat.voiceflow.speech.ModelSelectionPolicy.resolveModelId(savedModelId)
-        if (savedModelId != resolvedModelId) {
-            preferences.edit().putString("model_id", resolvedModelId).putString("model_file", ModelCatalog.byId(resolvedModelId).fileName).apply()
-            VoiceFlowLog.info(this, "Legacy model preference migrated to " + resolvedModelId + ".")
+        val baseDefaultApplied = preferences.getBoolean("base_default_applied_130", false)
+        if (!baseDefaultApplied) {
+            preferences.edit()
+                .putString("model_id", "base-q5")
+                .putString("model_file", ModelCatalog.byId("base-q5").fileName)
+                .putBoolean("base_default_applied_130", true)
+                .apply()
+            File(File(filesDir, "models"), "ggml-tiny-q5_1.bin").delete()
+            File(File(filesDir, "models"), "ggml-tiny-q5_1.bin.part").delete()
+            VoiceFlowLog.info(this, "Version 1.3.0 default model set to Base Q5; obsolete Tiny Q5 cache removed.")
+        } else {
+            val savedModelId = preferences.getString("model_id", null)
+            val resolvedModelId = com.ajmat.voiceflow.speech.ModelSelectionPolicy.resolveModelId(savedModelId)
+            if (savedModelId != resolvedModelId) {
+                preferences.edit().putString("model_id", resolvedModelId).putString("model_file", ModelCatalog.byId(resolvedModelId).fileName).apply()
+                VoiceFlowLog.info(this, "Legacy model preference migrated to " + resolvedModelId + ".")
+            }
         }
         VoiceFlowLog.info(this, "Ajmat VoiceFlow v2 settings opened.")
         buildScreen()
@@ -393,7 +405,7 @@ class MainActivity : Activity() {
         val pasteHelper = isPasteHelperEnabled()
         permissionStatus.text = "Microphone: " + (if (microphone) "allowed" else "not allowed") +
             "  •  Display over apps: " + (if (overlay) "allowed" else "not allowed") +
-            "  •  Paste Helper: " + (if (pasteHelper) "enabled" else "optional / off")
+            "  •  Keyboard helper: " + (if (pasteHelper) "enabled" else "not enabled")
     }
 
     private fun isPasteHelperEnabled(): Boolean {
