@@ -46,20 +46,20 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         VoiceFlowLog.installCrashHandler(applicationContext)
         val baseDefaultApplied = preferences.getBoolean("base_default_applied_130", false)
-        if (!baseDefaultApplied) {
+        val savedModelId = preferences.getString("model_id", null)
+        val resolvedModelId = com.ajmat.voiceflow.speech.ModelSelectionPolicy
+            .initialModelId(savedModelId, baseDefaultApplied)
+        if (!baseDefaultApplied || savedModelId != resolvedModelId) {
             preferences.edit()
-                .putString("model_id", "base-q5")
-                .putString("model_file", ModelCatalog.byId("base-q5").fileName)
+                .putString("model_id", resolvedModelId)
+                .putString("model_file", ModelCatalog.byId(resolvedModelId).fileName)
                 .putBoolean("base_default_applied_130", true)
                 .apply()
-            File(File(filesDir, "models"), "ggml-tiny-q5_1.bin").delete()
-            File(File(filesDir, "models"), "ggml-tiny-q5_1.bin.part").delete()
-            VoiceFlowLog.info(this, "Version 1.3.0 default model set to Base Q5; obsolete Tiny Q5 cache removed.")
-        } else {
-            val savedModelId = preferences.getString("model_id", null)
-            val resolvedModelId = com.ajmat.voiceflow.speech.ModelSelectionPolicy.resolveModelId(savedModelId)
-            if (savedModelId != resolvedModelId) {
-                preferences.edit().putString("model_id", resolvedModelId).putString("model_file", ModelCatalog.byId(resolvedModelId).fileName).apply()
+            if (!baseDefaultApplied) {
+                File(File(filesDir, "models"), "ggml-tiny-q5_1.bin").delete()
+                File(File(filesDir, "models"), "ggml-tiny-q5_1.bin.part").delete()
+                VoiceFlowLog.info(this, "Version 1.3.0 default model set to Base Q5; obsolete Tiny Q5 cache removed.")
+            } else {
                 VoiceFlowLog.info(this, "Legacy model preference migrated to " + resolvedModelId + ".")
             }
         }
