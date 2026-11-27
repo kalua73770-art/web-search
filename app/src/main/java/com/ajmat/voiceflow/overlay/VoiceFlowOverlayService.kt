@@ -191,7 +191,7 @@ class VoiceFlowOverlayService : Service() {
             minWidth = dp(38)
             isAllCaps = false
             setPadding(0, 0, 0, 0)
-            setOnClickListener { pasteTranscript() }
+            setOnClickListener { if (recording) stopAndTranscribe() else pasteTranscript() }
         }
         panel.addView(statusView, LinearLayout.LayoutParams(dp(48), dp(36)))
         panel.addView(startStopButton, LinearLayout.LayoutParams(dp(48), dp(42)))
@@ -295,7 +295,8 @@ class VoiceFlowOverlayService : Service() {
             currentProgress = 0
             progressBar?.progress = 0
             progressBar?.visibility = ProgressBar.GONE
-            pasteButton?.isEnabled = false
+            pasteButton?.isEnabled = true
+            pasteButton?.contentDescription = "Finish recording and transcribe"
             cancelButton?.isEnabled = true
             startStopButton?.text = "■ Stop"
             startStopButton?.isEnabled = true
@@ -320,6 +321,7 @@ class VoiceFlowOverlayService : Service() {
         startStopButton?.isEnabled = false
         startStopButton?.text = "…"
         startStopButton?.contentDescription = "Transcribing"
+        pasteButton?.isEnabled = false
         cancelButton?.isEnabled = true
         cancelButton?.text = "×"
         cancelButton?.contentDescription = "Cancel recognition"
@@ -461,6 +463,7 @@ class VoiceFlowOverlayService : Service() {
                 message.contains("Audio captured", ignoreCase = true) -> "WORK"
             message.contains("pasted", ignoreCase = true) -> "DONE"
             message.startsWith("Done", ignoreCase = true) -> "DONE"
+            message.contains("copied", ignoreCase = true) -> "COPY"
             message.startsWith("ERROR", ignoreCase = true) -> "ERROR"
             message.contains("cancel", ignoreCase = true) -> "STOP"
             else -> "READY"
