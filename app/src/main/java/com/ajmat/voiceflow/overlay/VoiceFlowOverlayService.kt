@@ -191,7 +191,6 @@ class VoiceFlowOverlayService : Service() {
             contentDescription = "Insert transcript"
             minWidth = dp(38)
             isAllCaps = false
-            isEnabled = false
             setPadding(0, 0, 0, 0)
             setOnClickListener { pasteTranscript() }
         }
@@ -332,7 +331,8 @@ class VoiceFlowOverlayService : Service() {
             processing = false
             startStopButton?.isEnabled = true
             startStopButton?.text = "🎙 Start"
-            cancelButton?.isEnabled = false
+            cancelButton?.isEnabled = true
+            cancelButton?.text = "×"
             VoiceFlowLog.error(this, "Microphone stop failed.", error)
             setStatus(error.message ?: "Recording failed.")
             return
@@ -375,8 +375,8 @@ class VoiceFlowOverlayService : Service() {
                     lastTranscript = result.text
                     startStopButton?.isEnabled = true
                     startStopButton?.text = "🎙 Start"
-                    cancelButton?.isEnabled = false
-                    cancelButton?.text = "Cancel"
+                    cancelButton?.isEnabled = true
+                    cancelButton?.text = "×"
                     pasteButton?.isEnabled = true
                     progressBar?.progress = 100
                     setClipboard(result.text)
@@ -394,8 +394,8 @@ class VoiceFlowOverlayService : Service() {
                     }
                     startStopButton?.isEnabled = true
                     startStopButton?.text = "🎙 Start"
-                    cancelButton?.isEnabled = false
-                    cancelButton?.text = "Cancel"
+                    cancelButton?.isEnabled = true
+                    cancelButton?.text = "×"
                     pasteButton?.isEnabled = false
                     val message = error.message ?: "Transcription failed."
                     setStatus("ERROR: " + message)
@@ -410,7 +410,7 @@ class VoiceFlowOverlayService : Service() {
         if (!processing) return
         cancellationRequested = true
         cancelButton?.isEnabled = false
-        cancelButton?.text = "Stopping…"
+        cancelButton?.text = "…" 
         setStatus("Cancellation requested. Waiting for the native engine to stop safely…")
         VoiceFlowLog.warn(this, "User requested inference cancellation.")
         WhisperEngine.cancelTranscription()
